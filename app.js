@@ -730,10 +730,11 @@ async function onCallAnswer(m) {
   } catch (e) { hangup('error'); }
 }
 function onRemoteIce(m) {
-  if (state.call && state.call.callId === m.callId && state.call.pc.remoteDescription) {
+  if (!state.call || state.call.callId !== m.callId) return;
+  if (state.call.pc.remoteDescription) {
     state.call.pc.addIceCandidate(m.candidate).catch(() => {});
-  } else if (state.pendingOffer && state.pendingOffer.callId === m.callId) {
-    state.iceQueue.push(m.candidate);
+  } else {
+    state.iceQueue.push(m.candidate); // mbaji deri sa remoteDescription të vendoset
   }
 }
 function flushIce() {
@@ -891,7 +892,7 @@ document.addEventListener('visibilitychange', () => {
         state.backgroundPaused = true;
         try { state.ws.close(); } catch (e) {}
       }
-    }, 15000);
+    }, 8000);
   } else {
     clearTimeout(hideTimer);
     state.backgroundPaused = false;

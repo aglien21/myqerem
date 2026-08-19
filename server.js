@@ -164,11 +164,11 @@ try {
   console.log('[push] Moduli "web-push" nuk është instaluar -> njoftimet push janë të ç\'aktivizuara (chat & thirrje punojnë normalisht).');
 }
 
-function pushNotify(userId, title, body, tag, urgency) {
+function pushNotify(userId, title, body, tag, urgency, badge) {
   if (!pushReady) return;
   const subs = db.subs.filter(s => s.userId === userId);
   for (const s of subs) {
-    webpush.sendNotification(s, JSON.stringify({ title, body, tag, url: '/' }), {
+    webpush.sendNotification(s, JSON.stringify({ title, body, tag, url: '/', badge: badge || 1 }), {
       urgency: urgency || 'normal',
       TTL: urgency === 'high' ? 30 : 3600
     }).catch(err => {
@@ -224,6 +224,18 @@ const server = http.createServer(async (req, res) => {
       if (process.env.TURN_USERNAME) entry.username = process.env.TURN_USERNAME;
       if (process.env.TURN_CREDENTIAL) entry.credential = process.env.TURN_CREDENTIAL;
       iceServers.push(entry);
+    } else {
+      // TURN publik falas (Open Relay) — lidh thirrjet edhe ne rrjete CGNAT te operatorëve
+      iceServers.push({
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:80?transport=tcp',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp'
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      });
     }
     return json(res, 200, {
       name: 'Familja Chat',
@@ -425,7 +437,7 @@ server.on('upgrade', (req, socket) => {
         const set = online.get(me.id);
         if (set) for (const c of set) c.sendObj({ type: 'msg-sent', msg, clientId: m.clientId || null });
         if (delivered) sendTo(me.id, { type: 'msg-status', peer: peer.id, status: 'delivered', ids: [msg.id] });
-        else pushNotify(peer.id, me.name, img ? '📷 Foto' : (body.length > 80 ? body.slice(0, 77) + '…' : body), 'chat-' + me.id);
+        else { const unreadNow = (unreadFor(peer.id)[me.id] || 0) + 1; pushNotify(peer.id, me.name, img ? '📷 Foto' : (body.length > 80 ? body.slice(0, 77) + '…' : body), 'chat-' + me.id, 'normal', unreadNow); }
         return;
       }
 

@@ -46,6 +46,13 @@ self.addEventListener('push', (e) => {
     data: data,
     vibrate: [200, 100, 200],
     requireInteraction: !!data.tag && data.tag.startsWith('call-')
+  }).then(() => {
+    // shenja e kuqe ne ikona (ku mbështetet)
+    try {
+      if (data.badge && self.navigator && self.navigator.setAppBadge) {
+        self.navigator.setAppBadge(data.badge).catch(() => {});
+      }
+    } catch (err) {}
   }));
 });
 

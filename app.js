@@ -27,7 +27,8 @@ const state = {
   call: null,
   pendingOffer: null,
   iceQueue: [],
-  audio: null
+  audio: null,
+  backgroundPaused: false
 };
 const settings = { sound: true };
 try { Object.assign(settings, JSON.parse(storage.get('fc-settings') || '{}')); } catch (e) {}
@@ -264,6 +265,7 @@ function wsConnect() {
   ws.onerror = () => { try { ws.close(); } catch (e) {} };
 }
 function scheduleReconnect() {
+  if (state.backgroundPaused) return; // në sfond: mos u rilidh — lër push-in të punojë
   setTimeout(() => { if (!state.wsOk) wsConnect(); }, state.reconnect);
   state.reconnect = Math.min(state.reconnect * 2, 15000);
 }
@@ -363,6 +365,17 @@ function renderMe() {
   $('#set-name').textContent = state.me.name;
   if (state.inviteCode) $('#set-code').textContent = state.inviteCode;
 }
+/* shenja e kuqe me numrin e paleksuarish ne ikonë (ku mbështetet) */
+function updateBadge() {
+  try {
+    if (!('setAppBadge' in navigator)) return;
+    let total = 0;
+    for (const n of state.unread.values()) total += n;
+    if (total > 0) navigator.setAppBadge(total).catch(() => {});
+    else navigator.clearAppBadge().catch(() => {});
+  } catch (e) {}
+}
+
 function renderList() {
   const ul = $('#member-list');
   ul.textContent = '';
@@ -393,6 +406,7 @@ function renderList() {
     on(li, 'click', () => openChat(u.id));
     ul.appendChild(li);
   }
+  updateBadge();
 }
 
 /* ================== BISEDA ================== */
@@ -849,8 +863,24 @@ function urlB64ToUint8(b64) {
   return arr;
 }
 
+/* në sfond: mbyll lidhjen pas 15s që njoftimet push të vijnë GJITHMONË;
+   në hapje: rilidhu menjëherë */
+let hideTimer = null;
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && state.activeChat) markRead(state.activeChat);
+  if (document.hidden) {
+    hideTimer = setTimeout(() => {
+      if (document.hidden && state.ws && state.ws.readyState === 1) {
+        state.backgroundPaused = true;
+        try { state.ws.close(); } catch (e) {}
+      }
+    }, 15000);
+  } else {
+    clearTimeout(hideTimer);
+    state.backgroundPaused = false;
+    if (!state.wsOk) wsConnect();
+    if (state.activeChat) markRead(state.activeChat);
+    updateBadge();
+  }
 });
 window.addEventListener('resize', () => {
   if (window.innerWidth >= 900) $('#screen-list').classList.remove('hidden');

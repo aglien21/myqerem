@@ -231,8 +231,24 @@ function enterApp() {
   $('#screen-list').classList.remove('hidden');
   $('#screen-chat').classList.toggle('hidden', window.innerWidth < 900 ? true : !state.activeChat);
   wsConnect();
-  loadConfig();
+  loadConfig().then(healSubscription);
   registerSW();
+}
+/* rivendos abonimin push nëse ka humbur (p.sh. pas një rinisjeje të serverit) */
+async function healSubscription() {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (!state.config.vapidPublicKey || !('serviceWorker' in navigator) || !state.token) return;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(state.config.vapidPublicKey) });
+    }
+    await fetch('/api/push-sub', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: state.token, subscription: sub.toJSON() })
+    });
+  } catch (e) {}
 }
 function logout() {
   try { if (state.ws) state.ws.close(); } catch (e) {}
@@ -730,10 +746,11 @@ async function onCallAnswer(m) {
   } catch (e) { hangup('error'); }
 }
 function onRemoteIce(m) {
-  if (state.call && state.call.callId === m.callId && state.call.pc.remoteDescription) {
+  if (!state.call || state.call.callId !== m.callId) return;
+  if (state.call.pc.remoteDescription) {
     state.call.pc.addIceCandidate(m.candidate).catch(() => {});
-  } else if (state.pendingOffer && state.pendingOffer.callId === m.callId) {
-    state.iceQueue.push(m.candidate);
+  } else {
+    state.iceQueue.push(m.candidate); // mbaji deri sa remoteDescription të vendoset
   }
 }
 function flushIce() {
@@ -891,7 +908,7 @@ document.addEventListener('visibilitychange', () => {
         state.backgroundPaused = true;
         try { state.ws.close(); } catch (e) {}
       }
-    }, 15000);
+    }, 8000);
   } else {
     clearTimeout(hideTimer);
     state.backgroundPaused = false;

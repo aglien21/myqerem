@@ -23,7 +23,17 @@ const state = {
   ws: null,
   wsOk: false,
   reconnect: 1000,
-  config: { vapidPublicKey: null, iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] },
+  config: {
+    vapidPublicKey: null,
+    iceServers: [
+      { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+      {
+        urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:80?transport=tcp', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'],
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ]
+  },
   call: null,
   pendingOffer: null,
   iceQueue: [],
@@ -291,6 +301,12 @@ function handleWs(m) {
       updateConnStatus();
       renderMe();
       renderList();
+      // mbushi bisedat me mesazhet që mund të humbën gjatë kohës offline
+      if (state.wsOk && state.ws) {
+        const peers = new Set([...state.unread.keys()]);
+        if (state.activeChat) peers.add(state.activeChat);
+        for (const pid of peers) state.ws.send(JSON.stringify({ type: 'history', peer: pid }));
+      }
       break;
     }
     case 'presence': {
@@ -634,6 +650,7 @@ async function startCall(peerId, media) {
   const u = state.users.get(peerId);
   media = media === 'audio' ? 'audio' : 'video';
   try {
+    try { await loadConfig(); } catch (e) {}
     const local = await getMediaFor(media);
     const callId = 'k' + Date.now() + Math.random().toString(36).slice(2, 7);
     const pc = newPc(callId, peerId);
@@ -672,6 +689,7 @@ on($('#btn-accept'), 'click', async () => {
   $('#modal-incoming').classList.add('hidden');
   const media = m.media === 'audio' ? 'audio' : 'video';
   try {
+    try { await loadConfig(); } catch (e) {}
     const local = await getMediaFor(media);
     const pc = newPc(m.callId, m.from);
     local.getTracks().forEach(t => pc.addTrack(t, local));

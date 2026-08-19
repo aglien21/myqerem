@@ -1,0 +1,250 @@
+/* ============ Familja Chat — stilet (stil WhatsApp) ============ */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+:root {
+  --teal-dark: #075E54;
+  --teal: #128C7E;
+  --teal-light: #25D366;
+  --bg: #ECE5DD;
+  --bubble-out: #DCF8C6;
+  --bubble-in: #ffffff;
+  --tick: #53BDEB;
+  --muted: #6b7a76;
+  --danger: #d32f2f;
+}
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: #101816;
+  color: #111;
+  overflow: hidden;
+}
+#app { position: fixed; inset: 0; max-width: 100%; }
+.screen {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  background: var(--bg);
+}
+.hidden { display: none !important; }
+.offline-banner {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 95;
+  background: #b00020; color: #fff; padding: 10px 14px;
+  font-size: 13.5px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,.35);
+}
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input { font: inherit; }
+
+/* ---------------- Hyrja ---------------- */
+#screen-auth {
+  background: linear-gradient(160deg, var(--teal-dark), var(--teal) 70%);
+  align-items: center; justify-content: center; overflow-y: auto;
+  padding: 24px;
+}
+.auth-wrap { width: 100%; max-width: 360px; margin: auto; }
+.auth-logo { text-align: center; color: #fff; margin-bottom: 20px; }
+.auth-logo h1 { font-size: 26px; margin-top: 10px; letter-spacing: .3px; }
+.auth-logo .muted { color: rgba(255,255,255,.75); margin-top: 4px; font-size: 13px; }
+.tabs {
+  display: flex; background: rgba(0,0,0,.15); border-radius: 10px; padding: 4px; margin-bottom: 14px;
+}
+.tab {
+  flex: 1; padding: 9px; border-radius: 8px; color: rgba(255,255,255,.7); font-weight: 600;
+}
+.tab.active { background: #fff; color: var(--teal-dark); }
+.auth-form {
+  background: #fff; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+}
+.auth-form label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; color: #444; }
+.auth-form input {
+  padding: 11px 12px; border: 1.5px solid #cfd8d5; border-radius: 9px; font-size: 15px; outline: none; background: #fff;
+}
+.auth-form input:focus { border-color: var(--teal); }
+.btn {
+  padding: 11px 16px; border-radius: 9px; font-weight: 700; font-size: 15px; transition: filter .15s;
+}
+.btn:hover { filter: brightness(1.05); }
+.btn-primary { background: var(--teal); color: #fff; }
+.btn-secondary { background: #e8efed; color: var(--teal-dark); }
+.btn-danger { background: #fdecea; color: var(--danger); }
+.alert {
+  margin-top: 12px; background: #fdecea; color: var(--danger);
+  padding: 10px 12px; border-radius: 9px; font-size: 14px; text-align: center;
+}
+
+/* ---------------- Shiriti (header) ---------------- */
+.bar {
+  background: var(--teal-dark); color: #fff; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; min-height: 56px; padding-top: max(10px, env(safe-area-inset-top));
+  box-shadow: 0 1px 4px rgba(0,0,0,.3); z-index: 5;
+}
+.bar-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.bar-name { font-weight: 700; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-sub { font-size: 12px; opacity: .85; }
+.bar-actions { display: flex; gap: 4px; }
+.icon-btn { color: #fff; padding: 8px; border-radius: 50%; display: flex; }
+.icon-btn:active { background: rgba(255,255,255,.15); }
+.avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 17px; background: #999; position: relative;
+}
+.avatar.big { width: 84px; height: 84px; font-size: 34px; }
+.avatar .dot {
+  position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px;
+  border-radius: 50%; background: #9e9e9e; border: 2px solid #fff;
+}
+.avatar .dot.on { background: var(--teal-light); }
+
+/* ---------------- Lista ---------------- */
+.list-meta {
+  background: #dff0ea; color: #3a6b60; font-size: 13px; font-weight: 600;
+  padding: 6px 14px; border-bottom: 1px solid #cfe0db;
+}
+.member-list { list-style: none; overflow-y: auto; flex: 1; background: #fff; }
+.member-list li {
+  display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+  border-bottom: 1px solid #f0f0f0; cursor: pointer;
+}
+.member-list li:active { background: #f5f5f5; }
+.member-main { flex: 1; min-width: 0; }
+.member-name { font-weight: 600; font-size: 15.5px; }
+.member-preview {
+  font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;
+}
+.member-side { text-align: right; flex: none; }
+.member-time { font-size: 11.5px; color: var(--muted); }
+.badge {
+  display: inline-block; margin-top: 4px; min-width: 20px; padding: 2px 6px; border-radius: 11px;
+  background: var(--teal-light); color: #fff; font-size: 11.5px; font-weight: 700; text-align: center;
+}
+.empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 30px; background: #fff; text-align: center; }
+
+/* ---------------- Biseda ---------------- */
+.chat-bar .back { margin-left: -6px; }
+.peer-info { flex: 1; min-width: 0; cursor: pointer; }
+.messages {
+  flex: 1; overflow-y: auto; padding: 14px 10px 6px;
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%2300000008' stroke-width='2'%3E%3Cpath d='M12 30c6-10 18-10 24 0M60 78c6-10 18-10 24 0M96 18c6-10 18-10 24 0M30 96c6-10 18-10 24 0'/%3E%3Ccircle cx='90' cy='45' r='7'/%3E%3Ccircle cx='18' cy='66' r='5'/%3E%3Ccircle cx='60' cy='12' r='4'/%3E%3C/g%3E%3C/svg%3E");
+}
+.day-chip {
+  text-align: center; margin: 10px 0 6px;
+}
+.day-chip span {
+  background: #e1f2ea; color: #4a7a6d; font-size: 11.5px; font-weight: 700;
+  padding: 4px 10px; border-radius: 8px; display: inline-block;
+}
+.msg-row { display: flex; margin: 2px 0; }
+.msg-row.out { justify-content: flex-end; }
+.msg {
+  max-width: 80%; padding: 7px 9px 5px; border-radius: 9px; position: relative;
+  font-size: 14.5px; line-height: 1.35; word-wrap: break-word; white-space: pre-wrap;
+  box-shadow: 0 1px 1px rgba(0,0,0,.12);
+}
+.msg-row.in .msg { background: var(--bubble-in); border-top-left-radius: 2px; }
+.msg-row.out .msg { background: var(--bubble-out); border-top-right-radius: 2px; }
+.msg .meta {
+  display: flex; justify-content: flex-end; align-items: center; gap: 3px;
+  font-size: 10.5px; color: #7a8b85; margin-top: 2px; user-select: none;
+}
+.ticks { letter-spacing: -3px; color: #9aa8a2; }
+.ticks.dd { color: var(--tick); }
+.ticks.pending { opacity: .6; }
+.typing-msg { font-style: italic; }
+
+/* ---------------- Shkruesi i mesazhit ---------------- */
+.composer {
+  display: flex; align-items: center; gap: 6px; padding: 8px;
+  background: #f0f0f0; padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+#btn-emoji { color: #555; font-size: 22px; }
+#input {
+  flex: 1; border: none; border-radius: 22px; padding: 11px 16px; font-size: 15px;
+  outline: none; background: #fff;
+}
+.send-btn {
+  width: 44px; height: 44px; border-radius: 50%; background: var(--teal); color: #fff;
+  display: flex; align-items: center; justify-content: center; flex: none;
+}
+.send-btn:active { transform: scale(.95); }
+
+/* ---------------- Thirrja video ---------------- */
+.call-overlay {
+  position: fixed; inset: 0; background: #0c0c0c; z-index: 60; display: flex; flex-direction: column;
+}
+#remote-video { flex: 1; width: 100%; object-fit: contain; background: #000; min-height: 0; }
+#local-video {
+  position: absolute; right: 14px; top: max(14px, env(safe-area-inset-top)); width: 110px; height: 150px;
+  object-fit: cover; border-radius: 12px; background: #222; box-shadow: 0 4px 14px rgba(0,0,0,.5); z-index: 2;
+}
+.call-status {
+  position: absolute; left: 0; right: 0; top: max(16px, calc(env(safe-area-inset-top) + 16px));
+  text-align: center; color: #fff; font-size: 15px; font-weight: 600; z-index: 3;
+  text-shadow: 0 1px 3px rgba(0,0,0,.7);
+}
+.call-buttons {
+  display: flex; justify-content: center; gap: 18px; padding: 22px;
+  padding-bottom: max(26px, calc(env(safe-area-inset-bottom) + 22px)); background: rgba(0,0,0,.55);
+}
+.call-btn {
+  width: 58px; height: 58px; border-radius: 50%; background: rgba(255,255,255,.18); color: #fff;
+  display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px);
+}
+.call-btn.end { background: var(--danger); }
+.call-btn.accept { background: var(--teal-light); }
+.call-btn.off { background: #fff; color: #333; }
+
+/* ---------------- Modalet ---------------- */
+.modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 70;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-card {
+  background: #fff; border-radius: 16px; padding: 20px; width: 100%; max-width: 380px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.35); max-height: 85vh; overflow-y: auto;
+}
+.modal-title { font-size: 18px; font-weight: 800; margin-bottom: 12px; }
+.incoming-card { text-align: center; }
+.incoming-card .avatar { margin: 4px auto 12px; }
+.pulse { animation: pulse 1.4s infinite; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(37, 211, 102, .55); }
+  70% { box-shadow: 0 0 0 22px rgba(37, 211, 102, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0); }
+}
+.incoming-buttons { display: flex; justify-content: center; gap: 34px; margin-top: 20px; }
+.settings-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 9px 0; border-bottom: 1px solid #f0f0f0; font-size: 14.5px;
+}
+.settings-block { padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+.settings-label { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+.chip {
+  background: #e8f5ee; color: var(--teal-dark); font-weight: 800; letter-spacing: 2px;
+  padding: 5px 12px; border-radius: 8px; font-size: 15px; cursor: pointer;
+}
+.modal-actions { display: flex; gap: 10px; margin-top: 16px; }
+.modal-actions .btn { flex: 1; }
+.switch { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
+.switch input { width: 18px; height: 18px; accent-color: var(--teal); }
+
+/* ---------------- Toasts ---------------- */
+.toasts { position: fixed; top: 0; left: 0; right: 0; z-index: 90; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: max(10px, env(safe-area-inset-top)); pointer-events: none; }
+.toast {
+  background: #233; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 13.5px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.3); max-width: 90%; animation: slide-in .25s ease;
+}
+@keyframes slide-in { from { transform: translateY(-16px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---------------- Desktop: dy kolona ---------------- */
+@media (min-width: 900px) {
+  #app { display: flex; }
+  #screen-auth { position: fixed; inset: 0; }
+  #screen-list {
+    position: relative; width: 380px; flex: none; inset: auto;
+    border-right: 1px solid #d6d2cb;
+  }
+  #screen-chat { position: relative; flex: 1; inset: auto; border-left: 1px solid #d6d2cb; }
+  .member-list li:hover { background: #f5f6f5; }
+}

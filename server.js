@@ -369,8 +369,10 @@ server.on('upgrade', (req, socket) => {
       case 'msg': {
         const peer = findUser(m.to);
         const body = String(m.text || '').trim().slice(0, MAX_MESSAGE_LEN);
-        if (!peer || peer.id === me.id || !body) return;
+        const img = (typeof m.img === 'string' && m.img.startsWith('data:image/') && m.img.length < 500000) ? m.img : null;
+        if (!peer || peer.id === me.id || (!body && !img)) return;
         const msg = { id: uid(), from: me.id, to: peer.id, text: body, ts: Date.now() };
+        if (img) msg.img = img;
         db.messages.push(msg);
         if (db.messages.length > MAX_MESSAGES) db.messages.splice(0, db.messages.length - MAX_MESSAGES);
         markDirty();
@@ -383,7 +385,7 @@ server.on('upgrade', (req, socket) => {
         const set = online.get(me.id);
         if (set) for (const c of set) c.sendObj({ type: 'msg-sent', msg, clientId: m.clientId || null });
         if (delivered) sendTo(me.id, { type: 'msg-status', peer: peer.id, status: 'delivered', ids: [msg.id] });
-        else pushNotify(peer.id, me.name, body.length > 80 ? body.slice(0, 77) + '…' : body, 'chat-' + me.id);
+        else pushNotify(peer.id, me.name, img ? '📷 Foto' : (body.length > 80 ? body.slice(0, 77) + '…' : body), 'chat-' + me.id);
         return;
       }
 
@@ -418,13 +420,14 @@ server.on('upgrade', (req, socket) => {
       /* ---------- signalizimi i thirrjeve (WebRTC) ---------- */
       case 'call-offer': {
         const peer = findUser(m.to);
+        const media = m.media === 'audio' ? 'audio' : 'video';
         if (!peer || !m.sdp || !m.callId) return;
         if (!isOnline(peer.id)) {
-          pushNotify(peer.id, '📞 ' + me.name, 'Thirrje video… hap aplikacionin.', 'call-' + me.id, 'high');
+          pushNotify(peer.id, '📞 ' + me.name, media === 'audio' ? 'Thirrje… hap aplikacionin.' : 'Thirrje video… hap aplikacionin.', 'call-' + me.id, 'high');
           reply({ type: 'call-unreachable', callId: m.callId });
           return;
         }
-        sendTo(peer.id, { type: 'call-offer', from: me.id, callId: m.callId, sdp: m.sdp });
+        sendTo(peer.id, { type: 'call-offer', from: me.id, callId: m.callId, sdp: m.sdp, media });
         return;
       }
       case 'call-answer': {

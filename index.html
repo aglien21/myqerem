@@ -26,7 +26,7 @@
             <path d="M32 20.2c-3.9 5.2-9.3 8-9.3 13.3 0 5.1 4.2 9.3 9.3 9.3s9.3-4.2 9.3-9.3c0-5.3-5.4-8.1-9.3-13.3z" fill="#fff"/>
           </svg>
           <h1>Familja Chat</h1>
-          <p class="muted">Biseda & telefonata video — vetëm për familjen tënde.</p>
+          <p class="muted">Biseda & telefonata — vetëm për familjen tënde.</p>
         </div>
 
         <div class="tabs">
@@ -81,7 +81,7 @@
       <div class="list-meta" id="list-meta">Anëtarë: 1</div>
       <ul id="member-list" class="member-list"></ul>
       <div id="list-empty" class="empty-state hidden">
-        <p>S\'ka anëtarë tjerë ende.</p>
+        <p>S'ka anëtarë tjerë ende.</p>
         <p class="muted">Ftoi familjen me kodin e ftesës — e sheh te <b>Cilësimet</b>.</p>
       </div>
     </section>
@@ -98,6 +98,9 @@
           <div class="bar-sub" id="peer-status">…</div>
         </div>
         <div class="bar-actions">
+          <button id="btn-voice" class="icon-btn call" title="Thirrje zanore" aria-label="Thirrje zanore">
+            <svg viewBox="0 0 24 24" width="21" height="21"><path fill="currentColor" d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24c1.13.37 2.33.57 3.58.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.85 21 3 13.15 3 3.5a1 1 0 0 1 1-1H7.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.58a1 1 0 0 1-.25 1.01l-2.2 2.2z"/></svg>
+          </button>
           <button id="btn-call" class="icon-btn call" title="Thirrje video" aria-label="Thirrje video">
             <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
           </button>
@@ -105,6 +108,10 @@
       </header>
       <main id="messages" class="messages"></main>
       <footer class="composer">
+        <button id="btn-photo" class="icon-btn photo" type="button" aria-label="Dërgo foto" title="Dërgo foto">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM9 3 7.17 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.17L15 3H9zm3 4.2a4.8 4.8 0 1 1 0 9.6 4.8 4.8 0 0 1 0-9.6z"/></svg>
+        </button>
+        <input id="photo-input" type="file" accept="image/*" hidden>
         <button id="btn-emoji" class="icon-btn" type="button" aria-label="Emojis">😊</button>
         <input id="input" type="text" placeholder="Shkruaj një mesazh…" maxlength="4000" autocomplete="off">
         <button id="btn-send" class="send-btn" type="button" aria-label="Dërgo">
@@ -113,10 +120,14 @@
       </footer>
     </section>
 
-    <!-- ================= MBIVENDOSJA E THIRRJES VIDEO ================= -->
+    <!-- ================= MBIVENDOSJA E THIRRJES ================= -->
     <div id="call-overlay" class="call-overlay hidden">
       <video id="remote-video" autoplay playsinline></video>
       <video id="local-video" autoplay playsinline muted></video>
+      <div id="call-audio" class="call-audio hidden">
+        <div id="audio-avatar" class="avatar big pulse">?</div>
+        <div id="audio-name" class="call-audio-name">…</div>
+      </div>
       <div id="call-status" class="call-status">Po thirret…</div>
       <div class="call-buttons">
         <button id="btn-mute" class="call-btn" title="Mikrofoni">
@@ -135,7 +146,7 @@
     <div id="modal-incoming" class="modal hidden">
       <div class="modal-card incoming-card">
         <div id="incoming-avatar" class="avatar big pulse">?</div>
-        <div class="modal-title" id="incoming-name">Thirrje video</div>
+        <div class="modal-title" id="incoming-name">Thirrje</div>
         <div class="muted" id="incoming-sub">…</div>
         <div class="incoming-buttons">
           <button id="btn-decline" class="call-btn end">✕</button>
@@ -160,7 +171,7 @@
         </div>
         <div class="settings-block">
           <div class="settings-label">Njoftimet</div>
-          <p class="muted small">Aktivizoi që të të vijnë njoftime kur je jashtë aplikacionit (pasi të vendoset në serverin real).</p>
+          <p class="muted small">Aktivizoi që të të vijnë njoftime kur je jashtë aplikacionit.</p>
           <button id="btn-notif" class="btn btn-secondary">Aktivizo njoftimet</button>
           <span id="notif-status" class="muted small"></span>
         </div>
@@ -176,8 +187,11 @@
           <button id="btn-logout" class="btn btn-danger">Dil</button>
           <button id="btn-close-settings" class="btn btn-primary">Mbyll</button>
         </div>
+        <p class="muted small" style="text-align:center;margin-top:12px;">Familja Chat · v1.1</p>
       </div>
     </div>
+
+    <div id="lightbox" class="lightbox hidden"><img id="lightbox-img" alt="Foto"></div>
 
     <div id="toasts" class="toasts"></div>
   </div>

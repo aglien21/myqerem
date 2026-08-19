@@ -1,14 +1,86 @@
-/* ============ Familja Chat — aplikacioni (klient) ============ */
+/* ============ Familja Chat — aplikacioni (klient) v1.1 ============ */
 (function () {
 'use strict';
 
-/* ---------- ruajtje e sigurt (në sandbox-i preview localStorage mund të jetë i bllokuar) ---------- */
+/* ---------- ruajtje e sigurt (localStorage mund të jetë i bllokuar në iframe) ---------- */
 const mem = {};
 const storage = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return (k in mem) ? mem[k] : null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { mem[k] = v; } },
   del(k) { try { localStorage.removeItem(k); } catch (e) { delete mem[k]; } }
 };
+
+/* ---------- gjendja ---------- */
+const state = {
+  token: storage.get('fc-token'),
+  me: null,
+  users: new Map(),
+  msgs: new Map(),
+  unread: new Map(),
+  last: new Map(),
+  typing: new Map(),
+  activeChat: null,
+  ws: null,
+  wsOk: false,
+  reconnect: 1000,
+  config: { vapidPublicKey: null, iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] },
+  call: null,
+  pendingOffer: null,
+  iceQueue: [],
+  audio: null
+};
+const settings = { sound: true };
+try { Object.assign(settings, JSON.parse(storage.get('fc-settings') || '{}')); } catch (e) {}
+
+/* ---------- histori lokale e pavdekshme (IndexedDB) ---------- */
+let idb = null;
+try {
+  const rq = indexedDB.open('familja-chat', 1);
+  rq.onupgradeneeded = (e) => { e.target.result.createObjectStore('msgs', { keyPath: 'id' }); };
+  rq.onsuccess = (e) => { idb = e.target.result; };
+  rq.onerror = () => {};
+} catch (e) {}
+
+function peerOf(m) { return state.me && m.from === state.me.id ? m.to : m.from; }
+function cacheMsg(m) {
+  if (!m || !m.id || !idb || !state.me) return;
+  try {
+    idb.transaction('msgs', 'readwrite').objectStore('msgs')
+      .put({ id: m.id, owner: state.me.id, peer: peerOf(m), msg: m });
+  } catch (e) {}
+}
+function loadCached(peer) {
+  return new Promise((res) => {
+    if (!idb || !state.me) return res([]);
+    const out = [];
+    try {
+      const rq = idb.transaction('msgs', 'readonly').objectStore('msgs').openCursor();
+      rq.onsuccess = (e) => {
+        const c = e.target.result;
+        if (c) {
+          const v = c.value;
+          if (v && v.owner === state.me.id && v.peer === peer) out.push(v.msg);
+          c.continue();
+        } else res(out);
+      };
+      rq.onerror = () => res(out);
+    } catch (e) { res([]); }
+  });
+}
+function mergeInto(peer, incoming) {
+  const arr = ensureMsgs(peer);
+  const byId = new Map();
+  const noId = [];
+  for (const x of arr) { if (x.id) byId.set(x.id, x); else noId.push(x); }
+  for (const x of (incoming || [])) {
+    if (!x || !x.id) continue;
+    const cur = byId.get(x.id);
+    byId.set(x.id, cur ? Object.assign(cur, x) : x);
+  }
+  const out = noId.concat([...byId.values()]).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  state.msgs.set(peer, out);
+  return out;
+}
 
 /* ---------- shkurtesa ---------- */
 const $ = (s) => document.querySelector(s);
@@ -34,33 +106,10 @@ function fmtDay(ts) {
 }
 function fmtLastSeen(ts) {
   if (!ts) return 'offline';
-  const diff = Date.now() - ts;
-  if (diff < 90e3) return 'ishte tani';
+  if (Date.now() - ts < 90e3) return 'ishte tani';
   try { return 'ishte online ' + new Date(ts).toLocaleString('sq-AL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
   catch (e) { return 'offline'; }
 }
-
-/* ---------- gjendja ---------- */
-const state = {
-  token: storage.get('fc-token'),
-  me: null,
-  users: new Map(),        // id -> {id,name,color,online,lastSeen,isAdmin}
-  msgs: new Map(),         // peerId -> [msg]
-  unread: new Map(),       // peerId -> n
-  last: new Map(),         // peerId -> {text, ts, from}
-  typing: new Map(),       // peerId -> expiry
-  activeChat: null,
-  ws: null,
-  wsOk: false,
-  reconnect: 1000,
-  config: { vapidPublicKey: null, iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] },
-  call: null,              // {callId, peerId, pc, local, role, status, timer}
-  pendingOffer: null,      // {from, callId, sdp} — thirrje që po rngon
-  iceQueue: [],
-  audio: null
-};
-const settings = { sound: true };
-try { Object.assign(settings, JSON.parse(storage.get('fc-settings') || '{}')); } catch (e) {}
 
 /* ---------- tingujt ---------- */
 function audioCtx() {
@@ -94,14 +143,12 @@ function stopRing() {
   try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
 }
 
-/* ---------- toast ---------- */
+/* ---------- toast + banneri i gjendjes ---------- */
 function toast(text) {
   const t = el('div', 'toast', text);
   $('#toasts').appendChild(t);
   setTimeout(() => t.remove(), 3200);
 }
-
-/* ---------- shiriti i gjendjes: a po përgjigjet serveri? ---------- */
 function checkServerAlive() {
   const b = $('#offline-banner');
   if (!b) return;
@@ -205,6 +252,7 @@ function wsConnect() {
   ws.onopen = () => {
     state.wsOk = true;
     state.reconnect = 1000;
+    updateConnStatus();
     ws.send(JSON.stringify({ type: 'hello' }));
   };
   ws.onmessage = (e) => { try { handleWs(JSON.parse(e.data)); } catch (err) {} };
@@ -253,15 +301,16 @@ function handleWs(m) {
     }
     case 'msg': {
       onIncomingMsg(m.msg);
+      cacheMsg(m.msg);
       break;
     }
     case 'msg-sent': {
-      // konfirmimi i serverit (zëvendëso flluskën optimiste ose sinkronizo pajisjen tjetër)
       const peer = state.me && m.msg.to === state.me.id ? m.msg.from : m.msg.to;
       const arr = ensureMsgs(peer);
       const idx = m.clientId ? arr.findIndex(x => x.clientId === m.clientId) : arr.findIndex(x => x.id === m.msg.id);
       if (idx >= 0) arr[idx] = m.msg; else if (!arr.some(x => x.id === m.msg.id)) arr.push(m.msg);
-      state.last.set(peer, { text: m.msg.text, ts: m.msg.ts, from: m.msg.from });
+      cacheMsg(m.msg);
+      state.last.set(peer, { text: (m.msg.img && !m.msg.text) ? '📷 Foto' : m.msg.text, ts: m.msg.ts, from: m.msg.from });
       if (state.activeChat === peer) renderChat();
       renderList();
       break;
@@ -285,12 +334,11 @@ function handleWs(m) {
       break;
     }
     case 'history': {
-      state.msgs.set(m.peer, m.messages.slice());
+      mergeInto(m.peer, m.messages);
+      for (const x of m.messages) cacheMsg(x);
       if (state.activeChat === m.peer) { renderChat(); markRead(m.peer); }
       break;
     }
-
-    /* ---------- thirrjet ---------- */
     case 'call-offer': onCallOffer(m); break;
     case 'call-answer': onCallAnswer(m); break;
     case 'ice': onRemoteIce(m); break;
@@ -329,22 +377,18 @@ function renderList() {
     const li = el('li');
     const av = el('div', 'avatar', u.name.charAt(0).toUpperCase());
     av.style.background = u.color;
-    const dot = el('span', 'dot' + (u.online ? ' on' : ''));
-    av.appendChild(dot);
-
+    av.appendChild(el('span', 'dot' + (u.online ? ' on' : '')));
     const main = el('div', 'member-main');
     main.appendChild(el('div', 'member-name', u.name));
+    const last = state.last.get(u.id);
     const prev = state.typing.has(u.id)
       ? 'po shkruan…'
-      : (state.last.get(u.id) ? ((state.last.get(u.id).from === (state.me && state.me.id) ? 'Ti: ' : '') + state.last.get(u.id).text) : 'S\'ka mesazhe');
+      : (last ? ((last.from === (state.me && state.me.id) ? 'Ti: ' : '') + last.text) : 'S\'ka mesazhe');
     main.appendChild(el('div', 'member-preview', prev));
-
     const side = el('div', 'member-side');
-    const last = state.last.get(u.id);
     side.appendChild(el('div', 'member-time', last ? fmtTime(last.ts) : ''));
     const n = state.unread.get(u.id) || 0;
     if (n > 0) side.appendChild(el('span', 'badge', String(n)));
-
     li.appendChild(av); li.appendChild(main); li.appendChild(side);
     on(li, 'click', () => openChat(u.id));
     ul.appendChild(li);
@@ -363,15 +407,14 @@ function openChat(peerId) {
   av.textContent = u.name.charAt(0).toUpperCase();
   av.style.background = u.color;
   updatePeerHeader();
-  if (!state.msgs.has(peerId)) {
-    renderChat();
-    if (state.wsOk) state.ws.send(JSON.stringify({ type: 'history', peer: peerId }));
-  } else {
-    renderChat();
-  }
+  renderChat();
+  // historia lokale (në telefon) bashkohet me atë të serverit
+  loadCached(peerId).then((list) => {
+    if (list.length && state.activeChat === peerId) { mergeInto(peerId, list); renderChat(); }
+  });
+  if (state.wsOk) state.ws.send(JSON.stringify({ type: 'history', peer: peerId }));
   markRead(peerId);
-  const input = $('#input');
-  if (window.innerWidth >= 900 || true) input.focus({ preventScroll: true });
+  $('#input').focus({ preventScroll: true });
 }
 function updatePeerHeader() {
   const u = state.users.get(state.activeChat);
@@ -409,11 +452,21 @@ function renderMsg(m) {
   const mine = m.from === (state.me && state.me.id);
   const row = el('div', 'msg-row ' + (mine ? 'out' : 'in'));
   const b = el('div', 'msg');
-  b.appendChild(document.createTextNode(m.text));
+  if (m.img) {
+    const im = el('img', 'msg-img');
+    im.src = m.img;
+    im.alt = 'Foto';
+    on(im, 'click', () => {
+      $('#lightbox-img').src = m.img;
+      $('#lightbox').classList.remove('hidden');
+    });
+    b.appendChild(im);
+  }
+  if (m.text) b.appendChild(document.createTextNode(m.text));
   const meta = el('div', 'meta');
   meta.appendChild(el('span', null, fmtTime(m.ts)));
   if (mine) {
-    const ticks = el('span', 'ticks', m.r ? '✓✓' : (m.d ? '✓✓' : (m.id ? '✓' : '✓')));
+    const ticks = el('span', 'ticks', m.r ? '✓✓' : (m.d ? '✓✓' : '✓'));
     if (m.clientId && !m.id) ticks.classList.add('pending');
     if (m.r) ticks.classList.add('dd');
     meta.appendChild(ticks);
@@ -424,8 +477,8 @@ function renderMsg(m) {
 }
 function onIncomingMsg(m) {
   const peerId = m.from;
-  ensureMsgs(peerId).push(m);
-  state.last.set(peerId, { text: m.text, ts: m.ts, from: m.from });
+  mergeInto(peerId, [m]);
+  state.last.set(peerId, { text: (m.img && !m.text) ? '📷 Foto' : m.text, ts: m.ts, from: m.from });
   const u = state.users.get(peerId);
   if (state.activeChat === peerId && !document.hidden) {
     renderChat();
@@ -433,7 +486,7 @@ function onIncomingMsg(m) {
   } else {
     state.unread.set(peerId, (state.unread.get(peerId) || 0) + 1);
     msgSound();
-    if (u) notify(u, m.text);
+    if (u) notify(u, m.img && !m.text ? '📷 Foto' : m.text);
   }
   renderList();
 }
@@ -479,16 +532,66 @@ on($('#btn-back'), 'click', () => {
   $('#screen-list').classList.remove('hidden');
 });
 
-/* ================== THIRRJET VIDEO (WebRTC) ================== */
+/* ---------- fotot ---------- */
+on($('#lightbox'), 'click', () => $('#lightbox').classList.add('hidden'));
+on($('#btn-photo'), 'click', () => $('#photo-input').click());
+on($('#photo-input'), 'change', (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (!String(f.type).startsWith('image/')) { toast('Zgjidh një foto.'); return; }
+  compressImage(f).then((dataUrl) => {
+    if (!dataUrl) { toast('Foto s\'u përpunua.'); return; }
+    if (!state.wsOk || !state.activeChat) { toast('S\'ka lidhje me serverin.'); return; }
+    const clientId = 'c' + Date.now() + Math.random().toString(36).slice(2, 7);
+    const optimistic = { clientId, id: null, from: state.me.id, to: state.activeChat, text: '', img: dataUrl, ts: Date.now() };
+    ensureMsgs(state.activeChat).push(optimistic);
+    renderChat();
+    state.last.set(state.activeChat, { text: '📷 Foto', ts: optimistic.ts, from: state.me.id });
+    renderList();
+    state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, text: '', img: dataUrl, clientId }));
+  });
+});
+function compressImage(file) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const MAX = 1280;
+        let w = img.naturalWidth || MAX, h = img.naturalHeight || MAX;
+        if (w > MAX || h > MAX) {
+          const k = Math.min(MAX / w, MAX / h);
+          w = Math.round(w * k); h = Math.round(h * k);
+        }
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL('image/jpeg', 0.75));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    } catch (e) { resolve(null); }
+  });
+}
+
+/* ================== THIRRJET (WebRTC) ================== */
 function callBtnBusy() { return !!(state.call || state.pendingOffer); }
 
 on($('#btn-call'), 'click', () => {
   if (!state.activeChat) return;
   if (callBtnBusy()) { toast('Je tashmë në thirrje.'); return; }
-  startCall(state.activeChat);
+  startCall(state.activeChat, 'video');
+});
+on($('#btn-voice'), 'click', () => {
+  if (!state.activeChat) return;
+  if (callBtnBusy()) { toast('Je tashmë në thirrje.'); return; }
+  startCall(state.activeChat, 'audio');
 });
 
-async function getMedia() {
+async function getMediaFor(media) {
+  if (media === 'audio') return navigator.mediaDevices.getUserMedia({ audio: true });
   return navigator.mediaDevices.getUserMedia({
     audio: true,
     video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
@@ -501,6 +604,11 @@ function newPc(callId, peerId) {
       state.ws.send(JSON.stringify({ type: 'ice', to: peerId, callId, candidate: e.candidate.toJSON() }));
     }
   };
+  pc.ontrack = (e) => {
+    const v = $('#remote-video');
+    if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
+    v.play().catch(() => {});
+  };
   pc.onconnectionstatechange = () => {
     if (!state.call) return;
     if (pc.connectionState === 'connected') setCallStatus('Lidhur');
@@ -508,18 +616,19 @@ function newPc(callId, peerId) {
   };
   return pc;
 }
-async function startCall(peerId) {
+async function startCall(peerId, media) {
   const u = state.users.get(peerId);
+  media = media === 'audio' ? 'audio' : 'video';
   try {
-    const local = await getMedia();
+    const local = await getMediaFor(media);
     const callId = 'k' + Date.now() + Math.random().toString(36).slice(2, 7);
     const pc = newPc(callId, peerId);
     local.getTracks().forEach(t => pc.addTrack(t, local));
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    state.call = { callId, peerId, pc, local, role: 'caller', status: 'calling' };
-    showCallOverlay('Po thirret…' + (u ? ' ' + u.name : ''), local);
-    state.ws.send(JSON.stringify({ type: 'call-offer', to: peerId, callId, sdp: offer.sdp }));
+    state.call = { callId, peerId, pc, local, role: 'caller', status: 'calling', media };
+    showCallOverlay('Po thirret…' + (u ? ' ' + u.name : ''), local, media);
+    state.ws.send(JSON.stringify({ type: 'call-offer', to: peerId, callId, sdp: offer.sdp, media }));
     state.call.timer = setTimeout(() => hangup('no-answer'), 45000);
   } catch (e) {
     toast('Mikrofoni/kamera s\'u aksesua: ' + (e.message || 'lejo qasjen në shfletues'));
@@ -531,9 +640,10 @@ function onCallOffer(m) {
     return;
   }
   const u = state.users.get(m.from);
+  m.media = m.media === 'audio' ? 'audio' : 'video';
   state.pendingOffer = m;
   state.iceQueue = [];
-  $('#incoming-name').textContent = 'Thirrje video';
+  $('#incoming-name').textContent = m.media === 'audio' ? 'Thirrje zanore' : 'Thirrje video';
   $('#incoming-sub').textContent = u ? u.name : 'Anonim';
   const av = $('#incoming-avatar');
   av.textContent = u ? u.name.charAt(0).toUpperCase() : '?';
@@ -546,16 +656,17 @@ on($('#btn-accept'), 'click', async () => {
   if (!m) return;
   stopRing();
   $('#modal-incoming').classList.add('hidden');
+  const media = m.media === 'audio' ? 'audio' : 'video';
   try {
-    const local = await getMedia();
+    const local = await getMediaFor(media);
     const pc = newPc(m.callId, m.from);
     local.getTracks().forEach(t => pc.addTrack(t, local));
     await pc.setRemoteDescription({ type: 'offer', sdp: m.sdp });
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    state.call = { callId: m.callId, peerId: m.from, pc, local, role: 'callee', status: 'connecting' };
+    state.call = { callId: m.callId, peerId: m.from, pc, local, role: 'callee', status: 'connecting', media };
     state.pendingOffer = null;
-    showCallOverlay('Duke u lidhur…', local);
+    showCallOverlay('Duke u lidhur…', local, media);
     flushIce();
     state.ws.send(JSON.stringify({ type: 'call-answer', to: m.from, callId: m.callId, sdp: answer.sdp }));
     state.call.timer = setTimeout(() => hangup('timeout'), 30000);
@@ -600,11 +711,23 @@ function flushIce() {
   }
   state.iceQueue = [];
 }
-function showCallOverlay(status, localStream) {
+function showCallOverlay(status, localStream, media) {
+  const audio = media === 'audio';
   $('#call-overlay').classList.remove('hidden');
   setCallStatus(status);
   $('#local-video').srcObject = localStream;
   $('#remote-video').srcObject = null;
+  $('#local-video').style.display = audio ? 'none' : '';
+  $('#remote-video').classList.toggle('audio-only', audio);
+  $('#btn-cam').style.display = audio ? 'none' : '';
+  $('#call-audio').classList.toggle('hidden', !audio);
+  if (audio && state.call) {
+    const u = state.users.get(state.call.peerId);
+    const av = $('#audio-avatar');
+    av.textContent = u ? u.name.charAt(0).toUpperCase() : '?';
+    av.style.background = u ? u.color : '#999';
+    $('#audio-name').textContent = u ? u.name : '…';
+  }
   updateCallButtons();
 }
 function setCallStatus(s) {
@@ -669,21 +792,11 @@ function endCallUi(text) {
   }
   $('#local-video').srcObject = null;
   $('#remote-video').srcObject = null;
+  $('#local-video').style.display = '';
+  $('#btn-cam').style.display = '';
+  $('#remote-video').classList.remove('audio-only');
+  $('#call-audio').classList.add('hidden');
 }
-/* videoja e largët */
-$('#remote-video').addEventListener('play', () => { if (state.call) setCallStatus('Lidhur'); });
-
-/* kur mbërrin pc.ontrack */
-const _newPc = newPc;
-newPc = function (callId, peerId) {
-  const pc = _newPc(callId, peerId);
-  pc.ontrack = (e) => {
-    const v = $('#remote-video');
-    if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
-    v.play().catch(() => {});
-  };
-  return pc;
-};
 
 /* ================== CILËSIME ================== */
 on($('#btn-settings'), 'click', () => $('#modal-settings').classList.remove('hidden'));
@@ -704,7 +817,6 @@ on($('#set-code'), 'click', async () => {
   catch (e) { toast('Kodi i ftesës: ' + code); }
 });
 
-/* ---------- njoftimet ---------- */
 async function enableNotifications() {
   if (typeof Notification === 'undefined') { $('#notif-status').textContent = 'Shfletuesi s\'i mbështet njoftimet.'; return; }
   let perm = Notification.permission;
@@ -713,7 +825,6 @@ async function enableNotifications() {
   }
   if (perm !== 'granted') { $('#notif-status').textContent = 'Leja s\'u dha.'; return; }
   $('#notif-status').textContent = 'Njoftimet në-aplikacion: ON.';
-  /* abonimi push (punon pas vendosjes me HTTPS + çelësat VAPID) */
   try {
     if (!state.config.vapidPublicKey) { $('#notif-status').textContent += ' (Push do të aktivizohet pas vendosjes në server.)'; return; }
     const reg = await navigator.serviceWorker.ready;
@@ -738,14 +849,11 @@ function urlB64ToUint8(b64) {
   return arr;
 }
 
-/* ---------- kur hapet mbyllur modalja e thirrjes gjatë ring ---------- */
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state.activeChat) markRead(state.activeChat);
 });
 window.addEventListener('resize', () => {
-  if (window.innerWidth >= 900) {
-    $('#screen-list').classList.remove('hidden');
-  }
+  if (window.innerWidth >= 900) $('#screen-list').classList.remove('hidden');
 });
 
 /* ================== NISJA ================== */

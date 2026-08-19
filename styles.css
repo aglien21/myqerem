@@ -121,6 +121,23 @@ input { font: inherit; }
 .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 30px; background: #fff; text-align: center; }
 
 /* ---------------- Biseda ---------------- */
+.composer .icon-btn { color: #546E7A; padding: 6px; }
+.msg img.msg-img {
+  display: block; max-width: 260px; max-height: 320px;
+  border-radius: 6px; margin-bottom: 4px; cursor: pointer; object-fit: cover;
+}
+.lightbox {
+  position: fixed; inset: 0; background: rgba(0,0,0,.93); z-index: 120;
+  display: flex; align-items: center; justify-content: center; cursor: zoom-out;
+}
+.lightbox img { max-width: 96vw; max-height: 96vh; border-radius: 4px; }
+.call-audio {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px; z-index: 1; color: #fff;
+}
+.call-audio .avatar { width: 110px; height: 110px; font-size: 44px; }
+.call-audio-name { font-size: 20px; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+#remote-video.audio-only { visibility: hidden; }
 .chat-bar .back { margin-left: -6px; }
 .peer-info { flex: 1; min-width: 0; cursor: pointer; }
 .messages {

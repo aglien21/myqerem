@@ -219,35 +219,24 @@ const server = http.createServer(async (req, res) => {
 
   if (p === '/api/config') {
     const iceServers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
-    // Cloudflare Calls TURN (1 TB/muaj falas) — kredenciale të përkohshme nënë çelësin CF_TURN_SECRET
-    if (process.env.CF_TURN_SECRET) {
-      const ttl = 86400; // vlefshme 24h
-      const username = String(Math.floor(Date.now() / 1000) + ttl);
-      const password = crypto.createHmac('sha1', process.env.CF_TURN_SECRET).update(username).digest('base64');
-      iceServers.push({
-        username,
-        credential: password,
-        urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turn:turn.cloudflare.com:3478?transport=tcp']
-      });
-    }
     if (process.env.TURN_URL) {
-      // TURN privat (metered.ca) — i besueshëm
-      const entry = { urls: process.env.TURN_URL.split(',').map(x => x.trim()).filter(Boolean) };
+      const entry = { urls: process.env.TURN_URL.split(',').map(s => s.trim()) };
       if (process.env.TURN_USERNAME) entry.username = process.env.TURN_USERNAME;
       if (process.env.TURN_CREDENTIAL) entry.credential = process.env.TURN_CREDENTIAL;
       iceServers.push(entry);
+    } else {
+      // TURN publik falas (Open Relay) — lidh thirrjet edhe ne rrjete CGNAT te operatorëve
+      iceServers.push({
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:80?transport=tcp',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp'
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      });
     }
-    // OpenRelay publik gjithmonë si rezervë
-    iceServers.push({
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:80?transport=tcp',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    });
     return json(res, 200, {
       name: 'Familja Chat',
       vapidPublicKey: pushReady ? process.env.VAPID_PUBLIC_KEY : null,
@@ -338,8 +327,6 @@ const server = http.createServer(async (req, res) => {
 /* ---------------------------------------------------------- WebSocket */
 /** userId -> Set<WSConn> */
 const online = new Map();
-/** thirrje pezulluar për marrës offline/të ngrirë: userId -> {from, callId, sdp, media, ts} */
-const pendingCalls = new Map();
 /** të gjitha lidhjet e autentikuara */
 const allConns = new Set();
 
@@ -356,14 +343,6 @@ function broadcast(obj) {
   for (const c of allConns) if (!c.closed) c.send(s);
 }
 function isOnline(id) { const s = online.get(id); return !!s && s.size > 0; }
-/* "online DHE i zgjuar" — pajisja e ngrirë në sfond s'përgjigjet dot (s'ka heartbeat) */
-function isResponsive(id) {
-  const set = online.get(id);
-  if (!set || set.size === 0) return false;
-  let last = 0;
-  for (const c of set) last = Math.max(last, c.lastActivity || 0);
-  return Date.now() - last < 40000;
-}
 
 function presenceSnapshot() {
   return db.users.map(u => publicUser(u, isOnline(u.id)));
@@ -411,12 +390,6 @@ server.on('upgrade', (req, socket) => {
   if (!online.has(userId)) online.set(userId, new Set());
   online.get(userId).add(conn);
   const fresh = online.get(userId).size === 1;
-
-  // nëse ka një thirrje që pret (deri 50 s), bjeri zilen menjëherë
-  const pend = pendingCalls.get(userId);
-  if (pend && Date.now() - pend.ts < 50000) {
-    setTimeout(() => conn.sendObj({ type: 'call-offer', from: pend.from, callId: pend.callId, sdp: pend.sdp, media: pend.media }), 600);
-  }
 
   const reply = (obj) => conn.sendObj(obj);
 
@@ -501,18 +474,16 @@ server.on('upgrade', (req, socket) => {
         const peer = findUser(m.to);
         const media = m.media === 'audio' ? 'audio' : 'video';
         if (!peer || !m.sdp || !m.callId) return;
-        // ruaje thirrjen — dorëzohet sapo marrësi të rikthehet (deri 50 s)
-        pendingCalls.set(peer.id, { from: me.id, callId: m.callId, sdp: m.sdp, media, ts: Date.now() });
-        const awake = isResponsive(peer.id);
-        if (!awake) {
+        if (!isOnline(peer.id)) {
           pushNotify(peer.id, '📞 ' + me.name, media === 'audio' ? 'Thirrje… hap aplikacionin.' : 'Thirrje video… hap aplikacionin.', 'call-' + me.id, 'high');
+          reply({ type: 'call-unreachable', callId: m.callId });
+          return;
         }
         sendTo(peer.id, { type: 'call-offer', from: me.id, callId: m.callId, sdp: m.sdp, media });
         return;
       }
       case 'call-answer': {
         const peer = findUser(m.to);
-        pendingCalls.delete(me.id);
         if (peer && m.sdp && m.callId) sendTo(peer.id, { type: 'call-answer', from: me.id, callId: m.callId, sdp: m.sdp });
         return;
       }
@@ -525,8 +496,7 @@ server.on('upgrade', (req, socket) => {
       case 'call-busy':
       case 'call-hangup': {
         const peer = findUser(m.to);
-        pendingCalls.delete(me.id);
-        if (peer) { pendingCalls.delete(peer.id); sendTo(peer.id, { type: m.type, from: me.id, callId: m.callId }); }
+        if (peer && m.callId) sendTo(peer.id, { type: m.type, from: me.id, callId: m.callId });
         return;
       }
     }
@@ -548,7 +518,7 @@ server.on('upgrade', (req, socket) => {
 setInterval(() => {
   const now = Date.now();
   for (const c of allConns) {
-    if (now - c.lastActivity > 80000) c.close(1001);
+    if (now - c.lastActivity > 120000) c.close(1001);
   }
 }, 30000);
 

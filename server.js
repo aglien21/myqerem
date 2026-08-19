@@ -27,20 +27,46 @@ const TOKEN_DAYS = 90;
 const PALETTE = ['#e53935','#d81b60','#8e24aa','#5e35b1','#3949ab','#1e88e5','#039be5','#00acc1','#00897b','#43a047','#7cb342','#fb8c00','#f4511e','#6d4c41','#546e7a','#ad1457'];
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-/* ---------------------------------------------------------- depo (JSON) */
+/* ---------------------------------------------------------- depo (JSON + Postgres opsional)
+   Me variablën DATABASE_URL (p.sh. Neon falas) llogaritë & mesazhet
+   ruhen në re PËRGJITHMONË — i mbijetojnë çdo rindezjeje të Render-it.
+   Pa të, përdoret skedari lokal db.json (zhduket në rindezje të Render free). */
 let db = {
   meta: { secret: null },
   family: { name: 'Familja Jonë', inviteCode: null, adminId: null },
-  users: [],   // {id, name, nameLower, passHash, salt, color, isAdmin, createdAt, lastSeen}
-  messages: [],// {id, from, to, text, ts, d?, r?}
-  subs: []     // {userId, endpoint, keys:{p256dh, auth}}
+  users: [],
+  messages: [],
+  subs: []
 };
+
+let pgPool = null;
+async function initDb() {
+  if (!process.env.DATABASE_URL) return;
+  try {
+    const pg = require('pg');
+    const cs = process.env.DATABASE_URL;
+    const local = /localhost|127\.0\.0\.1/.test(cs);
+    pgPool = new pg.Pool({ connectionString: cs, max: 3, ssl: local ? undefined : { rejectUnauthorized: false } });
+    await pgPool.query('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v JSONB)');
+    const r = await pgPool.query("SELECT v FROM kv WHERE k = 'db'");
+    if (r.rows.length && r.rows[0].v && Array.isArray(r.rows[0].v.users)) {
+      db = Object.assign(db, r.rows[0].v);
+      console.log('[depo] Postgres: u ngarkua — ' + db.users.length + ' anëtarë, ' + db.messages.length + ' mesazhe ✓');
+    } else {
+      console.log('[depo] Postgres: bosh — fillojmë të reja dhe ruhen atje.');
+      markDirty();
+    }
+  } catch (e) {
+    console.log('[depo] Postgres s\'u lidh (' + e.message + ') — vazhdoj me skedarin lokal.');
+    pgPool = null;
+  }
+}
 
 function loadDb() {
   try {
     const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     if (raw && Array.isArray(raw.users)) db = Object.assign(db, raw);
-  } catch (e) { /*填 fillimi i parë */ }
+  } catch (e) { /* fillimi i parë */ }
   if (!db.meta) db.meta = {};
   if (!db.meta.secret) { db.meta.secret = crypto.randomBytes(32).toString('hex'); markDirty(); }
   if (!db.family) db.family = { name: 'Familja Jonë', inviteCode: null, adminId: null };
@@ -49,7 +75,7 @@ function loadDb() {
 let dirty = false, saveTimer = null;
 function markDirty() {
   dirty = true;
-  if (!saveTimer) saveTimer = setTimeout(saveNow, 1500);
+  if (!saveTimer) saveTimer = setTimeout(saveNow, 3000);
 }
 function saveNow() {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
@@ -60,10 +86,24 @@ function saveNow() {
     const tmp = DB_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(db));
     fs.renameSync(tmp, DB_FILE);
-  } catch (e) { console.error('[depo] ruajtja dështoi:', e.message); }
+  } catch (e) { console.error('[depo] ruajtja lokale dështoi:', e.message); }
+  if (pgPool) {
+    pgPool.query(
+      "INSERT INTO kv (k, v) VALUES ('db', $1) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v",
+      [JSON.stringify(db)]
+    ).catch((e) => console.error('[depo] ruajtja në Postgres dështoi:', e.message));
+  }
 }
-process.on('SIGINT', () => { saveNow(); process.exit(0); });
-process.on('SIGTERM', () => { saveNow(); process.exit(0); });
+let exiting = false;
+async function shutdown() {
+  if (exiting) return;
+  exiting = true;
+  saveNow();
+  if (pgPool) { try { await pgPool.end(); } catch (e) {} }
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 /* ---------------------------------------------------------- ndihmës */
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -485,7 +525,9 @@ if (process.env.DEMO_BOT === '1' && fs.existsSync(path.join(__dirname, 'tools', 
 }
 
 /* ---------------------------------------------------------- nisja */
+(async () => {
 loadDb();
+await initDb();
 server.listen(PORT, HOST, () => {
   console.log('┌─────────────────────────────────────────────┐');
   console.log('│  FAMILJA CHAT                               │');
@@ -493,3 +535,4 @@ server.listen(PORT, HOST, () => {
   console.log('│  Anëtarë: ' + String(db.users.length).padStart(3) + '   Kodi i ftesës: ' + (db.family.inviteCode || '(do të krijohet nga i pari)') + ' │');
   console.log('└─────────────────────────────────────────────┘');
 });
+})();

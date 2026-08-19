@@ -9,5 +9,6 @@ Chat privat me mesazhe + foto + thirrje (zanore & video, WebRTC P2P) vetem per f
     VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY   -> njoftime push (gjenero: npx web-push generate-vapid-keys)
     TURN_URL / TURN_USERNAME / TURN_CREDENTIAL  -> thirrje ne rrjete te mbyllura
 
+Me DATABASE_URL (Neon falas) llogaritë & mesazhet ruhen përgjithmonë në re.
 Historia ruhet edhe lokalisht ne cdo pajisje (IndexedDB) dhe i mbijeton rindezjeve te serverit.
 Hyr si anetari i pare pa kod ftese -> behesh admin -> kodi i fteses delftohet te Cilesime.

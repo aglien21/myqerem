@@ -682,16 +682,27 @@ on($('#btn-voice'), 'click', () => {
   startCall(state.activeChat, 'audio');
 });
 
-/* prit t'i mblidhë UDHËRRËFIMET brenda paketës (jo me driçkë) — 4G-proof */
+/* pritje e mençur: dërgo SAPASI del kandidati i parë i URËS (relay),
+   ose kur mbaron mbledhja — max 3s. Zero vonesë kur ura punon. */
 function gatherComplete(pc, timeoutMs) {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === 'complete') return resolve();
     let done = false;
-    const fin = () => { if (!done) { done = true; resolve(); } };
+    const fin = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      pc.removeEventListener('icecandidate', onCand);
+      pc.removeEventListener('icegatheringstatechange', onChange);
+      resolve();
+    };
+    const onCand = (e) => {
+      if (e.candidate && String(e.candidate.candidate || '').indexOf('typ relay') !== -1) fin();
+    };
+    const onChange = () => { if (pc.iceGatheringState === 'complete') fin(); };
     const t = setTimeout(fin, timeoutMs);
-    pc.addEventListener('icegatheringstatechange', () => {
-      if (pc.iceGatheringState === 'complete') { clearTimeout(t); fin(); }
-    });
+    pc.addEventListener('icecandidate', onCand);
+    pc.addEventListener('icegatheringstatechange', onChange);
   });
 }
 
@@ -748,7 +759,7 @@ async function startCall(peerId, media) {
     local.getTracks().forEach(t => pc.addTrack(t, local));
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await gatherComplete(pc, 7000); // prit urat e TURN-it (ato janë të ngadalta)
+    await gatherComplete(pc, 3000); // dërgo sapas del ura (ose max 3s)
     dlog('Oferta gati: ' + state.iceTypes.host + ' host, ' + state.iceTypes.srflx + ' srflx, ' + state.iceTypes.relay + ' RELAY');
     state.call = { callId, peerId, pc, local, role: 'caller', status: 'calling', media };
     showCallOverlay('Po thirret…' + (u ? ' ' + u.name : ''), local, media);
@@ -791,7 +802,7 @@ on($('#btn-accept'), 'click', async () => {
     dlog('Oferta u pranua, po përgjigjem…');
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    await gatherComplete(pc, 7000);
+    await gatherComplete(pc, 3000);
     dlog('Përgjigja gati: ' + state.iceTypes.host + ' host, ' + state.iceTypes.srflx + ' srflx, ' + state.iceTypes.relay + ' RELAY');
     state.call = { callId: m.callId, peerId: m.from, pc, local, role: 'callee', status: 'connecting', media };
     state.pendingOffer = null;

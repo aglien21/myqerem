@@ -159,6 +159,7 @@ function newInviteCode() {
 
 /* ---------------------------------------------------------- push (opsional) */
 let webpush = null, pushReady = false;
+let turnCredCache = null; // fjalëkalimet e përkohshme të TURN-it (rifreskohen çdo orë)
 try {
   webpush = require('web-push');
   if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -243,11 +244,25 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (process.env.TURN_URL) {
-      // TURN privat (metered.ca) — i besueshëm
-      const entry = { urls: process.env.TURN_URL.split(',').map(x => x.trim()).filter(Boolean) };
-      if (process.env.TURN_USERNAME) entry.username = process.env.TURN_USERNAME;
-      if (process.env.TURN_CREDENTIAL) entry.credential = process.env.TURN_CREDENTIAL;
-      iceServers.push(entry);
+      const urls = process.env.TURN_URL.split(',').map(x => x.trim()).filter(Boolean);
+      if (process.env.TURN_SECRET) {
+        // Fjalëkalime me kohë-skadim (skema standarde TURN REST, draft-uberti):
+        // username = koha e skadimit, credential = HMAC-SHA1(SecretKey, username)
+        if (!turnCredCache || Date.now() - turnCredCache.ts > 3600e3) {
+          const un = String(Math.floor(Date.now() / 1000) + 86400);
+          turnCredCache = {
+            ts: Date.now(),
+            un,
+            pw: crypto.createHmac('sha1', process.env.TURN_SECRET).update(un).digest('base64')
+          };
+        }
+        iceServers.push({ username: turnCredCache.un, credential: turnCredCache.pw, urls });
+      } else if (process.env.TURN_USERNAME) {
+        const entry = { urls };
+        entry.username = process.env.TURN_USERNAME;
+        if (process.env.TURN_CREDENTIAL) entry.credential = process.env.TURN_CREDENTIAL;
+        iceServers.push(entry);
+      }
     }
     // OpenRelay publik gjithmonë si rezervë
     iceServers.push({

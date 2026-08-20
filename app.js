@@ -637,13 +637,28 @@ function compressImage(file) {
 /* ================== THIRRJET (WebRTC) ================== */
 function callBtnBusy() { return !!(state.call || state.pendingOffer); }
 /* iOS: videoja duhet "çkyçur" gjatë prekjes — pastaj luan edhe pa prekje */
+function attemptPlay(n) {
+  const v = $('#remote-video');
+  let p = null;
+  try { p = v.play(); } catch (e) { dlog('play: perjashtim ' + (e && e.name)); }
+  if (p && p.then) {
+    p.then(() => {
+      dlog('Po luan PROVA-OK ' + n);
+      $('#btn-unmute').classList.add('hidden');
+    }).catch((err) => {
+      dlog('play u bllokua: ' + (err && err.name) + ' (prova ' + n + ')');
+      if (n < 8) setTimeout(() => attemptPlay(n + 1), 1200);
+      else $('#btn-unmute').classList.remove('hidden');
+    });
+  }
+}
 function unlockVideo() {
   try {
     const v = $('#remote-video');
     v.muted = false;
     const p = v.play();
-    if (p && p.catch) p.catch((err) => dlog('unlock: ' + (err && err.name)));
-  } catch (e) { dlog('unlock: gabim'); }
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) {}
 }
 
 on($('#btn-call'), 'click', () => {
@@ -679,7 +694,7 @@ function newPc(callId, peerId) {
     state.remoteStream = e.streams[0]; // ruaje — ekrani i thirrjes s'e fshin dot më
     const v = $('#remote-video');
     if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
-    v.play().catch(() => {});
+    attemptPlay(1);
   };
   pc.onconnectionstatechange = () => {
     if (!state.call) return;
@@ -687,8 +702,7 @@ function newPc(callId, peerId) {
       dlog('LIDHUR ✓ (ICE: dërguar ' + iceSent + ', marrë ' + iceGot + ')');
       clearTimeout(state.call.timer); // lidhja u krye — hiq pritësin, thirrja QËNDRON
       setCallStatus('Lidhur');
-      const v = $('#remote-video');
-      if (v && v.srcObject) v.play().catch(() => {});
+      attemptPlay(1);
     }
     if (pc.connectionState === 'failed') { dlog('LIDHJA DËSHTOI'); hangup('failed'); }
   };
@@ -841,6 +855,10 @@ on($('#btn-cam'), 'click', () => {
   updateCallButtons();
 });
 on($('#btn-end'), 'click', () => hangup('local'));
+on($('#btn-unmute'), 'click', () => {
+  unlockVideo();
+  attemptPlay(9);
+});
 function hangup(reason) {
   const c = state.call;
   if (!c) { endCallUi(null); return; }
@@ -886,6 +904,7 @@ function endCallUi(text) {
   $('#btn-cam').style.display = '';
   $('#remote-video').classList.remove('audio-only');
   $('#call-audio').classList.add('hidden');
+  $('#btn-unmute').classList.add('hidden');
 }
 
 /* ================== CILËSIME ================== */

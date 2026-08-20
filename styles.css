@@ -265,3 +265,11 @@ input { font: inherit; }
   #screen-chat { position: relative; flex: 1; inset: auto; border-left: 1px solid #d6d2cb; }
   .member-list li:hover { background: #f5f6f5; }
 }
+
+.call-unmute {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  z-index: 5; background: rgba(7, 94, 84, .92); color: #fff;
+  padding: 20px 28px; border-radius: 18px; font-size: 17px; font-weight: 700;
+  line-height: 1.5; box-shadow: 0 10px 40px rgba(0,0,0,.5);
+  animation: pulse 1.4s infinite;
+}

@@ -44,7 +44,8 @@ self.addEventListener('push', (e) => {
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     data: data,
-    vibrate: [200, 100, 200],
+    sound: 'default',
+    vibrate: [200, 100, 200, 100, 200],
     requireInteraction: !!data.tag && data.tag.startsWith('call-')
   }).then(() => {
     // shenja e kuqe ne ikona (ku mbështetet)

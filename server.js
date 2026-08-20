@@ -17,7 +17,7 @@ const { WSConn, acceptKey } = require('./ws-lib');
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = __dirname;
-const STATIC_OK = new Set(['index.html','app.js','styles.css','sw.js','manifest.webmanifest','icon-192.png','icon-512.png','ring.wav']);
+const STATIC_OK = new Set(['index.html','app.js','styles.css','sw.js','manifest.webmanifest','icon-192.png','icon-512.png']);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 

@@ -374,7 +374,7 @@ function isResponsive(id) {
   if (!set || set.size === 0) return false;
   let last = 0;
   for (const c of set) last = Math.max(last, c.lastActivity || 0);
-  return Date.now() - last < 40000;
+  return Date.now() - last < 20000;
 }
 
 function presenceSnapshot() {

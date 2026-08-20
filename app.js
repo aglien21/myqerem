@@ -122,6 +122,16 @@ function fmtLastSeen(ts) {
   catch (e) { return 'offline'; }
 }
 
+/* ---------- diagnostika e thirrjes (për gjetjen e problemeve) ---------- */
+const diag = [];
+function dlog(msg) {
+  try {
+    diag.push(new Date().toLocaleTimeString('sq-AL') + ' · ' + msg);
+    if (diag.length > 150) diag.shift();
+  } catch (e) {}
+}
+let iceSent = 0, iceGot = 0;
+
 /* ---------- tingujt ---------- */
 function audioCtx() {
   if (!state.audio) {
@@ -259,7 +269,9 @@ async function loadConfig() {
   try {
     const r = await fetch('/api/config');
     state.config = await r.json();
-  } catch (e) {}
+    const hasTurn = (state.config.iceServers || []).some(x => String(x.urls).includes('turn:'));
+    dlog('Konfigurimi: TURN ' + (hasTurn ? 'AKTIV ✓' : 'MOSS'));
+  } catch (e) { dlog('Konfigurimi s\'u lexua'); }
 }
 function registerSW() {
   if ('serviceWorker' in navigator) {
@@ -299,7 +311,7 @@ setInterval(() => {
   if (state.wsOk && state.ws && state.ws.readyState === 1) {
     state.ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
   }
-}, 25000);
+}, 10000);
 
 function updateConnStatus() {
   const s = $('#conn-status');
@@ -624,13 +636,24 @@ function compressImage(file) {
 
 /* ================== THIRRJET (WebRTC) ================== */
 function callBtnBusy() { return !!(state.call || state.pendingOffer); }
+/* iOS: videoja duhet "çkyçur" gjatë prekjes — pastaj luan edhe pa prekje */
+function unlockVideo() {
+  try {
+    const v = $('#remote-video');
+    v.muted = false;
+    const p = v.play();
+    if (p && p.catch) p.catch((err) => dlog('unlock: ' + (err && err.name)));
+  } catch (e) { dlog('unlock: gabim'); }
+}
 
 on($('#btn-call'), 'click', () => {
+  unlockVideo();
   if (!state.activeChat) return;
   if (callBtnBusy()) { toast('Je tashmë në thirrje.'); return; }
   startCall(state.activeChat, 'video');
 });
 on($('#btn-voice'), 'click', () => {
+  unlockVideo();
   if (!state.activeChat) return;
   if (callBtnBusy()) { toast('Je tashmë në thirrje.'); return; }
   startCall(state.activeChat, 'audio');
@@ -646,11 +669,13 @@ async function getMediaFor(media) {
 function newPc(callId, peerId) {
   const pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
   pc.onicecandidate = (e) => {
+    if (e.candidate) dlog('ICE dërguar #' + (++iceSent));
     if (e.candidate && state.wsOk) {
       state.ws.send(JSON.stringify({ type: 'ice', to: peerId, callId, candidate: e.candidate.toJSON() }));
     }
   };
   pc.ontrack = (e) => {
+    dlog('Media e ardhur (pista: ' + e.track.kind + ')');
     state.remoteStream = e.streams[0]; // ruaje — ekrani i thirrjes s'e fshin dot më
     const v = $('#remote-video');
     if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
@@ -659,12 +684,13 @@ function newPc(callId, peerId) {
   pc.onconnectionstatechange = () => {
     if (!state.call) return;
     if (pc.connectionState === 'connected') {
+      dlog('LIDHUR ✓ (ICE: dërguar ' + iceSent + ', marrë ' + iceGot + ')');
       clearTimeout(state.call.timer); // lidhja u krye — hiq pritësin, thirrja QËNDRON
       setCallStatus('Lidhur');
       const v = $('#remote-video');
       if (v && v.srcObject) v.play().catch(() => {});
     }
-    if (pc.connectionState === 'failed') hangup('failed');
+    if (pc.connectionState === 'failed') { dlog('LIDHJA DËSHTOI'); hangup('failed'); }
   };
   return pc;
 }
@@ -674,6 +700,7 @@ async function startCall(peerId, media) {
   try {
     try { await loadConfig(); } catch (e) {}
     const local = await getMediaFor(media);
+    dlog('Kamera/mikro morën leje (' + media + ')');
     const callId = 'k' + Date.now() + Math.random().toString(36).slice(2, 7);
     const pc = newPc(callId, peerId);
     local.getTracks().forEach(t => pc.addTrack(t, local));
@@ -705,6 +732,7 @@ function onCallOffer(m) {
   startRing();
 }
 on($('#btn-accept'), 'click', async () => {
+  unlockVideo();
   const m = state.pendingOffer;
   if (!m) return;
   stopRing();
@@ -716,6 +744,7 @@ on($('#btn-accept'), 'click', async () => {
     const pc = newPc(m.callId, m.from);
     local.getTracks().forEach(t => pc.addTrack(t, local));
     await pc.setRemoteDescription({ type: 'offer', sdp: m.sdp });
+    dlog('Oferta u pranua, po përgjigjem…');
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     state.call = { callId: m.callId, peerId: m.from, pc, local, role: 'callee', status: 'connecting', media };
@@ -747,11 +776,13 @@ async function onCallAnswer(m) {
   clearTimeout(c.timer);
   try {
     await c.pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
+    dlog('Përgjigja u mor, ICE: ' + iceGot + ' marrë');
     flushIce();
     setCallStatus('Lidhur');
   } catch (e) { hangup('error'); }
 }
 function onRemoteIce(m) {
+  if (m && m.candidate) iceGot++;
   if (state.call && state.call.callId === m.callId) {
     if (state.call.pc.remoteDescription) {
       state.call.pc.addIceCandidate(m.candidate).catch(() => {});
@@ -899,6 +930,11 @@ async function enableNotifications() {
   }
 }
 on($('#btn-notif'), 'click', enableNotifications);
+on($('#btn-diag'), 'click', async () => {
+  const txt = diag.length ? diag.join('\n') : '( ende pa thirrje te regjistruara )';
+  try { await navigator.clipboard.writeText(txt); $('#diag-status').textContent = 'U kopjua — dërgoje në bisedën tonë 💬'; }
+  catch (e) { $('#diag-status').textContent = txt.slice(0, 200); }
+});
 function urlB64ToUint8(b64) {
   const pad = '='.repeat((4 - b64.length % 4) % 4);
   const base64 = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');

@@ -243,26 +243,25 @@ const server = http.createServer(async (req, res) => {
         urls: ['turn:turn.cloudflare.com:3478?transport=udp', 'turn:turn.cloudflare.com:3478?transport=tcp']
       });
     }
-    if (process.env.TURN_URL) {
-      const urls = process.env.TURN_URL.split(',').map(x => x.trim()).filter(Boolean);
-      if (process.env.TURN_SECRET) {
-        // Fjalëkalime me kohë-skadim (skema standarde TURN REST, draft-uberti):
-        // username = koha e skadimit, credential = HMAC-SHA1(SecretKey, username)
-        if (!turnCredCache || Date.now() - turnCredCache.ts > 3600e3) {
-          const un = String(Math.floor(Date.now() / 1000) + 86400);
-          turnCredCache = {
-            ts: Date.now(),
-            un,
-            pw: crypto.createHmac('sha1', process.env.TURN_SECRET).update(un).digest('base64')
-          };
+    if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+      // Kredenciale statike nga paneli i metered.ca (formati i saktë) + pasqyro .live <-> .ca
+      const base = process.env.TURN_URL.split(',').map(x => x.trim()).filter(Boolean);
+      const urls = [];
+      for (const u of base) {
+        urls.push(u);
+        if (u.indexOf('standard.relay.metered.live') !== -1) {
+          urls.push(u.replace(/standard\.relay\.metered\.live/g, 'standard.relay.metered.ca'));
         }
-        iceServers.push({ username: turnCredCache.un, credential: turnCredCache.pw, urls });
-      } else if (process.env.TURN_USERNAME) {
-        const entry = { urls };
-        entry.username = process.env.TURN_USERNAME;
-        if (process.env.TURN_CREDENTIAL) entry.credential = process.env.TURN_CREDENTIAL;
-        iceServers.push(entry);
       }
+      iceServers.push({ username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL, urls });
+    } else if (process.env.TURN_URL && process.env.TURN_SECRET) {
+      // skema standarde me kohë-skadim (draft-uberti) për shërbues të tjerë
+      const urls2 = process.env.TURN_URL.split(',').map(x => x.trim()).filter(Boolean);
+      if (!turnCredCache || Date.now() - turnCredCache.ts > 3600e3) {
+        const un = String(Math.floor(Date.now() / 1000) + 86400);
+        turnCredCache = { ts: Date.now(), un, pw: crypto.createHmac('sha1', process.env.TURN_SECRET).update(un).digest('base64') };
+      }
+      iceServers.push({ username: turnCredCache.un, credential: turnCredCache.pw, urls: urls2 });
     }
     // OpenRelay publik gjithmonë si rezervë
     iceServers.push({

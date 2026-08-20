@@ -181,8 +181,8 @@ function pushNotify(userId, title, body, tag, urgency, badge) {
   const subs = db.subs.filter(s => s.userId === userId);
   for (const s of subs) {
     webpush.sendNotification(s, JSON.stringify({ title, body, tag, url: '/', badge: badge || 1 }), {
-      urgency: urgency || 'normal',
-      TTL: urgency === 'high' ? 30 : 3600
+      urgency: 'high',      // e lartë PËR GJITHÇKA — e zgjon telefonin nga Doze (ekran i kyçur)
+      TTL: 86400            // ruhet deri 24 orë nëse pajisja s'arrihet dot
     }).catch(err => {
       if (err.statusCode === 404 || err.statusCode === 410) {
         db.subs = db.subs.filter(x => x.endpoint !== s.endpoint);

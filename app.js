@@ -680,6 +680,19 @@ on($('#btn-voice'), 'click', () => {
   startCall(state.activeChat, 'audio');
 });
 
+/* prit t'i mblidhë UDHËRRËFIMET brenda paketës (jo me driçkë) — 4G-proof */
+function gatherComplete(pc, timeoutMs) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') return resolve();
+    let done = false;
+    const fin = () => { if (!done) { done = true; resolve(); } };
+    const t = setTimeout(fin, timeoutMs);
+    pc.addEventListener('icegatheringstatechange', () => {
+      if (pc.iceGatheringState === 'complete') { clearTimeout(t); fin(); }
+    });
+  });
+}
+
 async function getMediaFor(media) {
   if (media === 'audio') return navigator.mediaDevices.getUserMedia({ audio: true });
   return navigator.mediaDevices.getUserMedia({
@@ -726,6 +739,8 @@ async function startCall(peerId, media) {
     local.getTracks().forEach(t => pc.addTrack(t, local));
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    await gatherComplete(pc, 2500); // mbushe paketën me udhërrëfime (anti-4G)
+    dlog('Oferta gati me ' + iceSent + ' udhërrëfime brenda');
     state.call = { callId, peerId, pc, local, role: 'caller', status: 'calling', media };
     showCallOverlay('Po thirret…' + (u ? ' ' + u.name : ''), local, media);
     state.ws.send(JSON.stringify({ type: 'call-offer', to: peerId, callId, sdp: offer.sdp, media }));
@@ -767,6 +782,8 @@ on($('#btn-accept'), 'click', async () => {
     dlog('Oferta u pranua, po përgjigjem…');
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    await gatherComplete(pc, 2500); // mbushe edhe përgjigjen me udhërrëfime
+    dlog('Përgjigja gati me udhërrëfime brenda');
     state.call = { callId: m.callId, peerId: m.from, pc, local, role: 'callee', status: 'connecting', media };
     state.pendingOffer = null;
     showCallOverlay('Duke u lidhur…', local, media);

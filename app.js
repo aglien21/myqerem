@@ -751,11 +751,14 @@ async function onCallAnswer(m) {
   } catch (e) { hangup('error'); }
 }
 function onRemoteIce(m) {
-  if (!state.call || state.call.callId !== m.callId) return;
-  if (state.call.pc.remoteDescription) {
-    state.call.pc.addIceCandidate(m.candidate).catch(() => {});
-  } else {
-    state.iceQueue.push(m.candidate); // mbaji deri sa remoteDescription të vendoset
+  if (state.call && state.call.callId === m.callId) {
+    if (state.call.pc.remoteDescription) {
+      state.call.pc.addIceCandidate(m.candidate).catch(() => {});
+    } else {
+      state.iceQueue.push(m.candidate); // mbaji deri sa remoteDescription të vendoset
+    }
+  } else if (state.pendingOffer && state.pendingOffer.callId === m.callId) {
+    state.iceQueue.push(m.candidate); // GJATË ZILES: ruaji — hidheshin poshtë! (bug i thirrjes një-drejtimore)
   }
 }
 function flushIce() {

@@ -500,6 +500,20 @@ server.on('upgrade', (req, socket) => {
         return;
       }
 
+      case 'remove-member': {
+        if (!conn.user.isAdmin) { reply({ type: 'error', msg: 'Vetëm administratori fshin anëtarë.' }); return; }
+        const target = findUser(m.userId);
+        if (!target || target.id === conn.user.id) return;
+        db.users = db.users.filter(u => u.id !== target.id);
+        db.messages = db.messages.filter(x => x.from !== target.id && x.to !== target.id);
+        db.subs = db.subs.filter(x => x.userId !== target.id);
+        markDirty();
+        const rset = online.get(target.id);
+        if (rset) { for (const c of Array.from(rset)) c.close(1000); }
+        broadcast({ type: 'presence', users: presenceSnapshot() });
+        reply({ type: 'member-removed', userId: target.id });
+        return;
+      }
       case 'history': {
         const peer = findUser(m.peer);
         if (!peer) return;

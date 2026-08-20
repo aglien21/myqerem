@@ -342,6 +342,12 @@ function handleWs(m) {
         if (state.me && u.id !== state.me.id) state.users.set(u.id, Object.assign(state.users.get(u.id) || {}, u));
       }
       renderList();
+      renderAdminMembers();
+      if (state.activeChat && !state.users.has(state.activeChat)) {
+        state.activeChat = null;
+        $('#screen-chat').classList.add('hidden');
+        $('#screen-list').classList.remove('hidden');
+      }
       if (state.activeChat) updatePeerHeader();
       break;
     }
@@ -908,7 +914,36 @@ function endCallUi(text) {
 }
 
 /* ================== CILËSIME ================== */
-on($('#btn-settings'), 'click', () => $('#modal-settings').classList.remove('hidden'));
+on($('#btn-settings'), 'click', () => {
+  $('#modal-settings').classList.remove('hidden');
+  renderAdminMembers();
+});
+/* vetëm admini: lista e anëtarëve me butonin Fshi */
+function renderAdminMembers() {
+  const block = $('#admin-block');
+  if (!block) return;
+  if (!state.me || !state.me.isAdmin) { block.style.display = 'none'; return; }
+  block.style.display = '';
+  const box = $('#admin-members');
+  box.textContent = '';
+  for (const u of state.users.values()) {
+    const row = el('div', 'settings-row');
+    row.appendChild(el('span', null, u.name));
+    const del = el('button', 'btn btn-danger');
+    del.textContent = 'Fshi';
+    del.style.padding = '6px 12px';
+    del.style.fontSize = '13px';
+    on(del, 'click', () => {
+      if (confirm('Të fshihet ' + u.name + '? Fshihet edhe biseda me te.')) {
+        if (state.wsOk && state.ws) state.ws.send(JSON.stringify({ type: 'remove-member', userId: u.id }));
+        renderAdminMembers();
+      }
+    });
+    row.appendChild(del);
+    box.appendChild(row);
+  }
+  if (!state.users.size) box.appendChild(el('p', 'muted small', 'S ka anëtarë tjerë.'));
+}
 on($('#btn-close-settings'), 'click', () => $('#modal-settings').classList.add('hidden'));
 $('#modal-settings').addEventListener('click', (e) => {
   if (e.target === $('#modal-settings')) $('#modal-settings').classList.add('hidden');

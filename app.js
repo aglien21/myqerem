@@ -39,7 +39,9 @@ const state = {
   iceQueue: [],
   audio: null,
   backgroundPaused: false,
-  iceTypes: { host: 0, srflx: 0, relay: 0 }
+  iceTypes: { host: 0, srflx: 0, relay: 0 },
+  autoAccept: false,
+  autoDecline: false
 };
 const settings = { sound: true };
 try { Object.assign(settings, JSON.parse(storage.get('fc-settings') || '{}')); } catch (e) {}
@@ -774,6 +776,11 @@ function onCallOffer(m) {
     if (state.wsOk) state.ws.send(JSON.stringify({ type: 'call-busy', to: m.from, callId: m.callId }));
     return;
   }
+  if (state.autoDecline) {
+    state.autoDecline = false;
+    if (state.wsOk) state.ws.send(JSON.stringify({ type: 'call-decline', to: m.from, callId: m.callId }));
+    return;
+  }
   const u = state.users.get(m.from);
   m.media = m.media === 'audio' ? 'audio' : 'video';
   state.pendingOffer = m;
@@ -785,8 +792,13 @@ function onCallOffer(m) {
   av.style.background = u ? u.color : '#999';
   $('#modal-incoming').classList.remove('hidden');
   startRing();
+  if (state.autoAccept) {
+    state.autoAccept = false;
+    setTimeout(doAccept, 800); // nje prekje = thirrja lidhet vete
+  }
 }
-on($('#btn-accept'), 'click', async () => {
+on($('#btn-accept'), 'click', doAccept);
+async function doAccept() {
   unlockVideo();
   const m = state.pendingOffer;
   if (!m) return;
@@ -816,7 +828,7 @@ on($('#btn-accept'), 'click', async () => {
     cleanupCall();
     hideIncoming();
   }
-});
+}
 on($('#btn-decline'), 'click', () => {
   const m = state.pendingOffer;
   stopRing();
@@ -1059,6 +1071,31 @@ window.addEventListener('resize', () => {
 });
 
 /* ================== NISJA ================== */
+try {
+  const qp = new URLSearchParams(location.search);
+  if (qp.get('call') === 'accept') state.autoAccept = true;
+  if (qp.get('call') === 'decline') state.autoDecline = true;
+  if (qp.has('call')) history.replaceState({}, '', location.pathname);
+} catch (e) {}
+try {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (ev) => {
+      const d = ev && ev.data;
+      if (!d || d.cmd !== 'call-action') return;
+      if (d.action === 'accept') state.autoAccept = true;
+      if (d.action === 'decline') {
+        state.autoDecline = true;
+        if (state.pendingOffer) {
+          const m0 = state.pendingOffer;
+          state.pendingOffer = null;
+          stopRing();
+          hideIncoming();
+          if (state.wsOk) state.ws.send(JSON.stringify({ type: 'call-decline', to: m0.from, callId: m0.callId }));
+        }
+      }
+    });
+  }
+} catch (e) {}
 if (state.token) {
   enterApp();
 } else {

@@ -657,7 +657,12 @@ function newPc(callId, peerId) {
   };
   pc.onconnectionstatechange = () => {
     if (!state.call) return;
-    if (pc.connectionState === 'connected') setCallStatus('Lidhur');
+    if (pc.connectionState === 'connected') {
+      clearTimeout(state.call.timer); // lidhja u krye — hiq pritësin, thirrja QËNDRON
+      setCallStatus('Lidhur');
+      const v = $('#remote-video');
+      if (v && v.srcObject) v.play().catch(() => {});
+    }
     if (pc.connectionState === 'failed') hangup('failed');
   };
   return pc;
@@ -717,7 +722,7 @@ on($('#btn-accept'), 'click', async () => {
     showCallOverlay('Duke u lidhur…', local, media);
     flushIce();
     state.ws.send(JSON.stringify({ type: 'call-answer', to: m.from, callId: m.callId, sdp: answer.sdp }));
-    state.call.timer = setTimeout(() => hangup('timeout'), 30000);
+    state.call.timer = setTimeout(() => hangup('timeout'), 45000);
   } catch (e) {
     toast('Kamera s\'u aksesua: ' + (e.message || ''));
     try { state.ws.send(JSON.stringify({ type: 'call-decline', to: m.from, callId: m.callId })); } catch (x) {}

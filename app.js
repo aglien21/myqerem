@@ -651,6 +651,7 @@ function newPc(callId, peerId) {
     }
   };
   pc.ontrack = (e) => {
+    state.remoteStream = e.streams[0]; // ruaje — ekrani i thirrjes s'e fshin dot më
     const v = $('#remote-video');
     if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
     v.play().catch(() => {});
@@ -773,7 +774,7 @@ function showCallOverlay(status, localStream, media) {
   $('#call-overlay').classList.remove('hidden');
   setCallStatus(status);
   $('#local-video').srcObject = localStream;
-  $('#remote-video').srcObject = null;
+  $('#remote-video').srcObject = state.remoteStream || null; // kurrë mos fshih video-në e ardhur!
   $('#local-video').style.display = audio ? 'none' : '';
   $('#remote-video').classList.toggle('audio-only', audio);
   $('#btn-cam').style.display = audio ? 'none' : '';
@@ -833,6 +834,7 @@ function cleanupCall() {
   }
   state.call = null;
   state.pendingOffer = null;
+  state.remoteStream = null;
   state.iceQueue = [];
   muted = false; camOff = false;
   stopRing();

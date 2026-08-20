@@ -38,7 +38,8 @@ const state = {
   pendingOffer: null,
   iceQueue: [],
   audio: null,
-  backgroundPaused: false
+  backgroundPaused: false,
+  iceTypes: { host: 0, srflx: 0, relay: 0 }
 };
 const settings = { sound: true };
 try { Object.assign(settings, JSON.parse(storage.get('fc-settings') || '{}')); } catch (e) {}
@@ -131,6 +132,7 @@ function dlog(msg) {
   } catch (e) {}
 }
 let iceSent = 0, iceGot = 0;
+function resetIceCounters() { iceSent = 0; iceGot = 0; state.iceTypes = { host: 0, srflx: 0, relay: 0 }; }
 
 /* ---------- tingujt ---------- */
 function audioCtx() {
@@ -703,7 +705,13 @@ async function getMediaFor(media) {
 function newPc(callId, peerId) {
   const pc = new RTCPeerConnection({ iceServers: state.config.iceServers || [] });
   pc.onicecandidate = (e) => {
-    if (e.candidate) dlog('ICE dërguar #' + (++iceSent));
+    if (e.candidate) {
+      iceSent++;
+      const c = e.candidate.candidate || '';
+      if (c.indexOf('typ relay') !== -1) state.iceTypes.relay++;
+      else if (c.indexOf('typ srflx') !== -1) state.iceTypes.srflx++;
+      else state.iceTypes.host++;
+    }
     if (e.candidate && state.wsOk) {
       state.ws.send(JSON.stringify({ type: 'ice', to: peerId, callId, candidate: e.candidate.toJSON() }));
     }
@@ -733,14 +741,15 @@ async function startCall(peerId, media) {
   try {
     try { await loadConfig(); } catch (e) {}
     const local = await getMediaFor(media);
+    resetIceCounters();
     dlog('Kamera/mikro morën leje (' + media + ')');
     const callId = 'k' + Date.now() + Math.random().toString(36).slice(2, 7);
     const pc = newPc(callId, peerId);
     local.getTracks().forEach(t => pc.addTrack(t, local));
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await gatherComplete(pc, 2500); // mbushe paketën me udhërrëfime (anti-4G)
-    dlog('Oferta gati me ' + iceSent + ' udhërrëfime brenda');
+    await gatherComplete(pc, 7000); // prit urat e TURN-it (ato janë të ngadalta)
+    dlog('Oferta gati: ' + state.iceTypes.host + ' host, ' + state.iceTypes.srflx + ' srflx, ' + state.iceTypes.relay + ' RELAY');
     state.call = { callId, peerId, pc, local, role: 'caller', status: 'calling', media };
     showCallOverlay('Po thirret…' + (u ? ' ' + u.name : ''), local, media);
     state.ws.send(JSON.stringify({ type: 'call-offer', to: peerId, callId, sdp: offer.sdp, media }));
@@ -782,8 +791,8 @@ on($('#btn-accept'), 'click', async () => {
     dlog('Oferta u pranua, po përgjigjem…');
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    await gatherComplete(pc, 2500); // mbushe edhe përgjigjen me udhërrëfime
-    dlog('Përgjigja gati me udhërrëfime brenda');
+    await gatherComplete(pc, 7000);
+    dlog('Përgjigja gati: ' + state.iceTypes.host + ' host, ' + state.iceTypes.srflx + ' srflx, ' + state.iceTypes.relay + ' RELAY');
     state.call = { callId: m.callId, peerId: m.from, pc, local, role: 'callee', status: 'connecting', media };
     state.pendingOffer = null;
     showCallOverlay('Duke u lidhur…', local, media);

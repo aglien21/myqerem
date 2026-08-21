@@ -322,3 +322,12 @@ body.dark .muted { color: #8696a0; }
 .del-btn:hover { opacity: 1; }
 
 .avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+
+/* v2.2: zgjedhja e mesazheve */
+.select-bar { display: flex; gap: 8px; align-items: center; padding: 8px 10px; background: #1f2c33; color: #fff; flex-wrap: wrap; }
+.select-bar .btn { padding: 7px 10px; font-size: 13px; }
+.select-bar .icon-btn { color: #fff; }
+.sel-check { margin-right: 6px; font-size: 16px; color: #128C7E; user-select: none; }
+.msg-row.selectable .msg { cursor: pointer; }
+.msg-row.selected .msg { outline: 2px solid #128C7E; }
+body.dark .select-bar { background: #2a3942; }

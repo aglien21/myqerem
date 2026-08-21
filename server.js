@@ -557,14 +557,38 @@ server.on('upgrade', (req, socket) => {
       }
 
       case 'msg-delete': {
-        const t = db.messages.find(x => x.id === m.id);
-        if (!t || t.from !== me.id || t.deleted) return;
-        t.deleted = true;
-        delete t.text; delete t.img; delete t.enc; delete t.voc;
+        const ids = Array.isArray(m.ids) ? m.ids.filter(x => typeof x === 'string').slice(0, 300) : (typeof m.id === 'string' ? [m.id] : []);
+        const done = [];
+        for (const id of ids) {
+          const t = db.messages.find(x => x.id === id);
+          if (!t || t.from !== me.id || t.deleted) continue;
+          t.deleted = true;
+          delete t.text; delete t.img; delete t.enc; delete t.voc;
+          done.push(t.id);
+        }
+        if (!done.length) return;
         markDirty();
         const own = online.get(me.id);
-        if (own) for (const c of own) c.sendObj({ type: 'msg-deleted', id: t.id });
-        sendTo(t.to, { type: 'msg-deleted', id: t.id, from: me.id });
+        if (own) for (const c of own) c.sendObj({ type: 'msg-deleted', ids: done });
+        for (const id of done) {
+          const t = db.messages.find(x => x.id === id);
+          if (t) sendTo(t.to, { type: 'msg-deleted', ids: [id], from: me.id });
+        }
+        return;
+      }
+      case 'chat-clear': {
+        const peer = findUser(m.peer);
+        if (!peer) return;
+        for (const x of db.messages) {
+          if (!x.deleted && ((x.from === me.id && x.to === peer.id) || (x.from === peer.id && x.to === me.id))) {
+            x.deleted = true;
+            delete x.text; delete x.img; delete x.enc; delete x.voc;
+          }
+        }
+        markDirty();
+        const own2 = online.get(me.id);
+        if (own2) for (const c of own2) c.sendObj({ type: 'chat-cleared', peer: peer.id });
+        sendTo(peer.id, { type: 'chat-cleared', peer: me.id });
         return;
       }
       case 'remove-member': {

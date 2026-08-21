@@ -38,16 +38,26 @@ self.addEventListener('push', (e) => {
   try { data = e.data ? e.data.json() : {}; } catch (err) {
     try { data = { title: 'Familja Chat', body: e.data ? e.data.text() : '' }; } catch (err2) {}
   }
-  e.waitUntil(self.registration.showNotification(data.title || 'Familja Chat', {
-    body: data.body || 'Ke një mesazh të ri',
+  const isCall = !!data.tag && data.tag.startsWith('call-');
+  const opts = {
+    body: isCall ? ((data.body || 'Thirrje') + ' — prek Përgjigju') : (data.body || 'Ke një mesazh të ri'),
     tag: data.tag || 'familja',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     data: data,
-    sound: 'default',
-    vibrate: [200, 100, 200, 100, 200],
-    requireInteraction: !!data.tag && data.tag.startsWith('call-')
-  }).then(() => {
+    vibrate: isCall ? [900, 400, 900, 400, 900, 400, 900] : [200, 100, 200, 100, 200],
+    requireInteraction: isCall
+  };
+  if (isCall) {
+    opts.sound = '/ring.wav';
+    opts.actions = [
+      { action: 'accept', title: 'Pergjigju' },
+      { action: 'decline', title: 'Refuzo' }
+    ];
+  } else {
+    opts.sound = 'default';
+  }
+  e.waitUntil(self.registration.showNotification(data.title || 'Familja Chat', opts).then(() => {
     // shenja e kuqe ne ikona (ku mbështetet)
     try {
       if (data.badge && self.navigator && self.navigator.setAppBadge) {
@@ -59,12 +69,17 @@ self.addEventListener('push', (e) => {
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
+  const act = e.action || '';
+  const url = act === 'accept' ? '/?call=accept' : (act === 'decline' ? '/?call=decline' : '/');
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const w of list) {
-        if ('focus' in w) return w.focus();
+        if ('focus' in w && 'postMessage' in w) {
+          if (act === 'accept' || act === 'decline') w.postMessage({ cmd: 'call-action', action: act });
+          return w.focus();
+        }
       }
-      return self.clients.openWindow(dataUrl(e.notification));
+      return self.clients.openWindow(url);
     })
   );
 });

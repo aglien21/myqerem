@@ -41,7 +41,9 @@ const state = {
   backgroundPaused: false,
   iceTypes: { host: 0, srflx: 0, relay: 0 },
   autoAccept: false,
-  autoDecline: false
+  autoDecline: false,
+  selectMode: false,
+  selected: new Set()
 };
 const settings = { sound: true };
 try { Object.assign(settings, JSON.parse(storage.get('fc-settings') || '{}')); } catch (e) {}
@@ -488,11 +490,23 @@ function handleWs(m) {
       break;
     }
     case 'msg-deleted': {
+      const ids = Array.isArray(m.ids) ? m.ids : (m.id ? [m.id] : []);
       for (const arr of state.msgs.values()) {
-        const x = arr.find(y => y.id === m.id);
-        if (x) { x.deleted = true; delete x.text; delete x.img; delete x.voc; delete x.enc; cacheMsg(x); }
+        for (const x of arr) {
+          if (ids.indexOf(x.id) !== -1) { x.deleted = true; delete x.text; delete x.img; delete x.voc; delete x.enc; cacheMsg(x); }
+        }
       }
       renderChat();
+      break;
+    }
+    case 'chat-cleared': {
+      const peer0 = m.peer;
+      state.msgs.set(peer0, []);
+      clearCached(peer0, null);
+      state.last.delete(peer0);
+      if (state.activeChat === peer0) renderChat();
+      renderList();
+      toast('Biseda u zgjerua 🧹');
       break;
     }
     case 'call-offer': onCallOffer(m); break;
@@ -634,6 +648,21 @@ function renderMsg(m) {
   const mine = m.from === (state.me && state.me.id);
   const row = el('div', 'msg-row ' + (mine ? 'out' : 'in'));
   const b = el('div', 'msg');
+  if (state.selectMode) {
+    if (mine && m.id && !m.deleted) {
+      row.classList.add('selectable');
+      if (state.selected.has(m.id)) row.classList.add('selected');
+      const chk = el('span', 'sel-check', state.selected.has(m.id) ? '☑' : '☐');
+      b.insertBefore(chk, b.firstChild);
+      on(row, 'click', () => {
+        if (state.selected.has(m.id)) state.selected.delete(m.id);
+        else state.selected.add(m.id);
+        renderChat();
+      });
+    }
+    metalessBuild(m, mine, b, row);
+    return row;
+  }
   if (m.deleted) {
     b.appendChild(el('div', 'deleted-msg', '🚫 Mesazhi u fshi'));
   } else if (m._fail) {
@@ -685,6 +714,21 @@ function renderMsg(m) {
   b.appendChild(meta);
   row.appendChild(b);
   return row;
+}
+function metalessBuild(m, mine, b, row) {
+  if (m.deleted) { b.appendChild(el('div', 'deleted-msg', '🚫 Mesazhi u fshi')); }
+  else {
+    if (m.voc) { const au = el('audio'); au.controls = true; au.preload = 'metadata'; au.src = m.voc; b.appendChild(au); }
+    if (m.img) { const im = el('img', 'msg-img'); im.src = m.img; im.alt = 'Foto'; b.appendChild(im); }
+    if (m.text) b.appendChild(document.createTextNode(m.text));
+    if (m._fail) b.appendChild(el('div', 'fail-msg', '🔒'));
+  }
+  const meta = el('div', 'meta');
+  meta.appendChild(el('span', null, fmtTime(m.ts)));
+  if (mine) { const ticks = el('span', 'ticks', m.r ? '✓✓' : (m.d ? '✓✓' : '✓')); if (m.r) ticks.classList.add('dd'); meta.appendChild(ticks); }
+  b.appendChild(meta);
+  row.appendChild(b);
+  updSelCount();
 }
 function onIncomingMsg(m) {
   const peerId = m.from;
@@ -747,6 +791,68 @@ on($('#btn-back'), 'click', () => {
   if (window.innerWidth < 900) $('#screen-chat').classList.add('hidden');
   $('#screen-list').classList.remove('hidden');
 });
+
+/* ---------- zgjedhja e mesazheve (tick) ---------- */
+function exitSelect() {
+  state.selectMode = false;
+  state.selected.clear();
+  $('#select-bar').classList.add('hidden');
+  renderChat();
+}
+on($('#btn-select'), 'click', () => {
+  state.selectMode = !state.selectMode;
+  state.selected.clear();
+  $('#select-bar').classList.toggle('hidden', !state.selectMode);
+  renderChat();
+});
+on($('#btn-sel-x'), 'click', exitSelect);
+on($('#btn-sel-all'), 'click', () => {
+  const arr = state.msgs.get(state.activeChat) || [];
+  for (const x of arr) if (x.id && x.from === state.me.id && !x.deleted) state.selected.add(x.id);
+  renderChat();
+});
+function updSelCount() {
+  $('#sel-count').textContent = state.selected.size + ' të zgjedhur';
+}
+on($('#btn-sel-del'), 'click', () => {
+  if (!state.selected.size) { toast('Zgjidh së pari mesazhet (trokit mbi to).'); return; }
+  if (!confirm('Fshi ' + state.selected.size + ' mesazhe për të gjithë?')) return;
+  const ids = Array.from(state.selected);
+  if (state.wsOk) state.ws.send(JSON.stringify({ type: 'msg-delete', ids }));
+  const arr = state.msgs.get(state.activeChat) || [];
+  for (const x of arr) {
+    if (state.selected.has(x.id)) { x.deleted = true; delete x.text; delete x.img; delete x.voc; delete x.enc; cacheMsg(x); }
+  }
+  exitSelect();
+});
+on($('#btn-sel-clear'), 'click', () => {
+  if (!state.activeChat) return;
+  if (!confirm('ZGJERO krejt biseden per te dyja anet? Pa kthim me!')) return;
+  if (state.wsOk) state.ws.send(JSON.stringify({ type: 'chat-clear', peer: state.activeChat }));
+  wipeConversation(state.activeChat, state.me.id);
+});
+function wipeConversation(peer, owner) {
+  state.msgs.set(peer, []);
+  state.last.delete(peer);
+  clearCached(peer, owner);
+  exitSelect();
+  renderChat();
+  renderList();
+}
+function clearCached(peer, owner) {
+  if (!idb) return;
+  try {
+    const st = idb.transaction('msgs', 'readwrite').objectStore('msgs');
+    const rq = st.openCursor();
+    rq.onsuccess = (e) => {
+      const c = e.target.result;
+      if (!c) return;
+      const v = c.value;
+      if (v && v.peer === peer && (!owner || v.owner === owner)) c.delete();
+      c.continue();
+    };
+  } catch (e) {}
+}
 
 /* ---------- fotot ---------- */
 on($('#lightbox'), 'click', () => $('#lightbox').classList.add('hidden'));
@@ -964,7 +1070,7 @@ async function startCall(peerId, media) {
     local.getTracks().forEach(t => pc.addTrack(t, local));
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await gatherComplete(pc, 3000); // dërgo sapas del ura (ose max 3s)
+    await gatherComplete(pc, 5000); // dërgo sapas del ura (ose max 5s)
     dlog('Oferta gati: ' + state.iceTypes.host + ' host, ' + state.iceTypes.srflx + ' srflx, ' + state.iceTypes.relay + ' RELAY');
     state.call = { callId, peerId, pc, local, role: 'caller', status: 'calling', media };
     showCallOverlay('Po thirret…' + (u ? ' ' + u.name : ''), local, media);
@@ -1016,7 +1122,7 @@ async function doAccept() {
     dlog('Oferta u pranua, po përgjigjem…');
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    await gatherComplete(pc, 3000);
+    await gatherComplete(pc, 5000);
     dlog('Përgjigja gati: ' + state.iceTypes.host + ' host, ' + state.iceTypes.srflx + ' srflx, ' + state.iceTypes.relay + ' RELAY');
     state.call = { callId: m.callId, peerId: m.from, pc, local, role: 'callee', status: 'connecting', media };
     state.pendingOffer = null;

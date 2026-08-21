@@ -39,7 +39,9 @@ const state = {
   iceQueue: [],
   audio: null,
   backgroundPaused: false,
-  iceTypes: { host: 0, srflx: 0, relay: 0 }
+  iceTypes: { host: 0, srflx: 0, relay: 0 },
+  autoAccept: false,
+  autoDecline: false
 };
 const settings = { sound: true };
 try { Object.assign(settings, JSON.parse(storage.get('fc-settings') || '{}')); } catch (e) {}
@@ -92,6 +94,88 @@ function mergeInto(peer, incoming) {
   const out = noId.concat([...byId.values()]).sort((a, b) => (a.ts || 0) - (b.ts || 0));
   state.msgs.set(peer, out);
   return out;
+}
+
+/* ============ FSHEHTËZI SKAJ-PËR-SKAJ (E2EE, si WhatsApp) ============
+   Çelësat mbeten VETËM në pajisjet e folësve. Serveri sheh vetëm "gegenshkrime". */
+function b64uBytes(u8) { let s = ''; for (const b of u8) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function ub64Bytes(b64) { const pad = '='.repeat((4 - b64.length % 4) % 4); const s = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/')); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+const E2EE = {
+  ready: false, priv: null, pubB64: null, cache: new Map(),
+  async init() {
+    try {
+      const saved = storage.get('fc-ekey');
+      if (saved) {
+        const j = JSON.parse(saved);
+        this.priv = await crypto.subtle.importKey('jwk', j.priv, { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+        this.pubB64 = j.pub;
+      } else {
+        const kp = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+        const privJwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+        const raw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+        this.priv = kp.privateKey;
+        this.pubB64 = b64uBytes(raw);
+        storage.set('fc-ekey', JSON.stringify({ priv: privJwk, pub: this.pubB64 }));
+      }
+      this.ready = true;
+    } catch (e) { this.ready = false; }
+    return this.ready;
+  },
+  sendKey() {
+    if (this.ready && state.wsOk && state.ws && state.ws.readyState === 1 && this.pubB64) {
+      state.ws.send(JSON.stringify({ type: 'pubkey', key: this.pubB64 }));
+    }
+  },
+  async keyFor(peerId) {
+    if (this.cache.has(peerId)) return this.cache.get(peerId);
+    const u = state.users.get(peerId);
+    if (!u || !u.pubKey || !this.ready || !this.priv) return null;
+    try {
+      const peerKey = await crypto.subtle.importKey('raw', ub64Bytes(u.pubKey), { name: 'ECDH', namedCurve: 'P-256' }, true, []);
+      const bits = await crypto.subtle.deriveBits({ name: 'ECDH', public: peerKey }, this.priv, 256);
+      const aes = await crypto.subtle.importKey('raw', bits, 'AES-GCM', false, ['encrypt', 'decrypt']);
+      this.cache.set(peerId, aes);
+      return aes;
+    } catch (e) { return null; }
+  },
+  async seal(peerId, obj) {
+    try {
+      const k = await this.keyFor(peerId);
+      if (!k) return null;
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(JSON.stringify(obj))));
+      const out = new Uint8Array(iv.length + ct.length);
+      out.set(iv); out.set(ct, iv.length);
+      return b64uBytes(out);
+    } catch (e) { return null; }
+  },
+  async open(peerId, b64) {
+    try {
+      const k = await this.keyFor(peerId);
+      if (!k) return null;
+      const buf = ub64Bytes(b64);
+      const iv = new Uint8Array(buf.slice(0, 12));
+      const ct = new Uint8Array(buf.slice(12));
+      const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, k, ct);
+      return JSON.parse(new TextDecoder().decode(pt));
+    } catch (e) { return null; }
+  }
+};
+async function hydrateMsg(m) {
+  if (m && m.enc && !m.deleted) {
+    const o = await E2EE.open(peerOf(m), m.enc);
+    if (o) {
+      m.text = o.t || '';
+      if (o.i) m.img = o.i;
+      if (o.v) m.voc = o.v;
+      if (o.d) m.dur = o.d;
+      m._dec = true;
+    } else {
+      m._fail = true;
+    }
+    delete m.enc;
+  }
+  return m;
 }
 
 /* ---------- shkurtesa ---------- */
@@ -243,6 +327,7 @@ function enterApp() {
   $('#screen-list').classList.remove('hidden');
   $('#screen-chat').classList.toggle('hidden', window.innerWidth < 900 ? true : !state.activeChat);
   wsConnect();
+  E2EE.init().then((ok) => { if (ok) E2EE.sendKey(); dlog('E2EE: ' + (ok ? 'gati' : 'jo aktiv')); });
   loadConfig().then(healSubscription);
   registerSW();
 }
@@ -295,6 +380,7 @@ function wsConnect() {
     state.reconnect = 1000;
     updateConnStatus();
     ws.send(JSON.stringify({ type: 'hello' }));
+    E2EE.sendKey();
   };
   ws.onmessage = (e) => { try { handleWs(JSON.parse(e.data)); } catch (err) {} };
   ws.onclose = () => {
@@ -354,17 +440,22 @@ function handleWs(m) {
       break;
     }
     case 'msg': {
-      onIncomingMsg(m.msg);
-      cacheMsg(m.msg);
+      hydrateMsg(m.msg).then((mm) => { onIncomingMsg(mm); cacheMsg(mm); });
       break;
     }
     case 'msg-sent': {
       const peer = state.me && m.msg.to === state.me.id ? m.msg.from : m.msg.to;
       const arr = ensureMsgs(peer);
       const idx = m.clientId ? arr.findIndex(x => x.clientId === m.clientId) : arr.findIndex(x => x.id === m.msg.id);
-      if (idx >= 0) arr[idx] = m.msg; else if (!arr.some(x => x.id === m.msg.id)) arr.push(m.msg);
-      cacheMsg(m.msg);
-      state.last.set(peer, { text: (m.msg.img && !m.msg.text) ? '📷 Foto' : m.msg.text, ts: m.msg.ts, from: m.msg.from });
+      if (idx >= 0) {
+        arr[idx] = Object.assign({}, arr[idx], { id: m.msg.id, ts: m.msg.ts, d: m.msg.d, r: m.msg.r });
+        cacheMsg(arr[idx]);
+      } else if (!arr.some(x => x.id === m.msg.id)) {
+        hydrateMsg(m.msg).then((mm) => { ensureMsgs(peer).push(mm); if (state.activeChat === peer) renderChat(); });
+      }
+      const src = idx >= 0 ? arr[idx] : m.msg;
+      const lt = src.deleted ? 'Mesazhi u fshi' : (src._fail ? '🔒 Mesazh' : (src.voc && !src.text) ? '🎤 Zanore' : (src.img && !src.text) ? '📷 Foto' : (src.text || '🔒 Mesazh'));
+      state.last.set(peer, { text: lt, ts: m.msg.ts, from: m.msg.from });
       if (state.activeChat === peer) renderChat();
       renderList();
       break;
@@ -388,9 +479,20 @@ function handleWs(m) {
       break;
     }
     case 'history': {
-      mergeInto(m.peer, m.messages);
-      for (const x of m.messages) cacheMsg(x);
-      if (state.activeChat === m.peer) { renderChat(); markRead(m.peer); }
+      (async () => {
+        for (const x of m.messages) await hydrateMsg(x);
+        mergeInto(m.peer, m.messages);
+        for (const x of m.messages) cacheMsg(x);
+        if (state.activeChat === m.peer) { renderChat(); markRead(m.peer); }
+      })();
+      break;
+    }
+    case 'msg-deleted': {
+      for (const arr of state.msgs.values()) {
+        const x = arr.find(y => y.id === m.id);
+        if (x) { x.deleted = true; delete x.text; delete x.img; delete x.voc; delete x.enc; cacheMsg(x); }
+      }
+      renderChat();
       break;
     }
     case 'call-offer': onCallOffer(m); break;
@@ -518,17 +620,31 @@ function renderMsg(m) {
   const mine = m.from === (state.me && state.me.id);
   const row = el('div', 'msg-row ' + (mine ? 'out' : 'in'));
   const b = el('div', 'msg');
-  if (m.img) {
-    const im = el('img', 'msg-img');
-    im.src = m.img;
-    im.alt = 'Foto';
-    on(im, 'click', () => {
-      $('#lightbox-img').src = m.img;
-      $('#lightbox').classList.remove('hidden');
-    });
-    b.appendChild(im);
+  if (m.deleted) {
+    b.appendChild(el('div', 'deleted-msg', '🚫 Mesazhi u fshi'));
+  } else if (m._fail) {
+    b.appendChild(el('div', 'fail-msg', '🔒 Mesazh i fshehtëzuar (s\'lexohet në këtë pajisje)'));
+  } else {
+    if (m.voc) {
+      const au = el('audio');
+      au.controls = true;
+      au.preload = 'metadata';
+      au.src = m.voc;
+      b.appendChild(au);
+    }
+    if (m.img) {
+      const im = el('img', 'msg-img');
+      im.src = m.img;
+      im.alt = 'Foto';
+      on(im, 'click', (ev) => {
+        ev.stopPropagation();
+        $('#lightbox-img').src = m.img;
+        $('#lightbox').classList.remove('hidden');
+      });
+      b.appendChild(im);
+    }
+    if (m.text) b.appendChild(document.createTextNode(m.text));
   }
-  if (m.text) b.appendChild(document.createTextNode(m.text));
   const meta = el('div', 'meta');
   meta.appendChild(el('span', null, fmtTime(m.ts)));
   if (mine) {
@@ -536,6 +652,21 @@ function renderMsg(m) {
     if (m.clientId && !m.id) ticks.classList.add('pending');
     if (m.r) ticks.classList.add('dd');
     meta.appendChild(ticks);
+    if (m.id && !m.deleted) {
+      const del = el('span', 'del-btn');
+      del.textContent = '🗑';
+      del.title = 'Fshije';
+      on(del, 'click', (ev) => {
+        ev.stopPropagation();
+        if (!confirm('Fshije mesazhin për të gjithë?')) return;
+        if (state.wsOk && state.ws) state.ws.send(JSON.stringify({ type: 'msg-delete', id: m.id }));
+        m.deleted = true;
+        delete m.text; delete m.img; delete m.voc; delete m.enc;
+        cacheMsg(m);
+        renderChat();
+      });
+      meta.appendChild(del);
+    }
   }
   b.appendChild(meta);
   row.appendChild(b);
@@ -544,7 +675,8 @@ function renderMsg(m) {
 function onIncomingMsg(m) {
   const peerId = m.from;
   mergeInto(peerId, [m]);
-  state.last.set(peerId, { text: (m.img && !m.text) ? '📷 Foto' : m.text, ts: m.ts, from: m.from });
+  const prev = m.deleted ? 'Mesazhi u fshi' : (m._fail ? '🔒 Mesazh' : (m.voc && !m.text) ? '🎤 Zanore' : (m.img && !m.text) ? '📷 Foto' : m.text);
+  state.last.set(peerId, { text: prev, ts: m.ts, from: m.from });
   const u = state.users.get(peerId);
   if (state.activeChat === peerId && !document.hidden) {
     renderChat();
@@ -552,7 +684,7 @@ function onIncomingMsg(m) {
   } else {
     state.unread.set(peerId, (state.unread.get(peerId) || 0) + 1);
     msgSound();
-    if (u) notify(u, m.img && !m.text ? '📷 Foto' : m.text);
+    if (u) notify(u, prev);
   }
   renderList();
 }
@@ -570,7 +702,11 @@ function sendMsg() {
   renderChat();
   renderList();
   input.value = '';
-  state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, text, clientId }));
+  (async () => {
+    const enc = await E2EE.seal(state.activeChat, { t: text });
+    if (enc) state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, enc, clientId }));
+    else state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, text, clientId }));
+  })();
   sendTyping(false);
 }
 on($('#btn-send'), 'click', sendMsg);
@@ -606,7 +742,7 @@ on($('#photo-input'), 'change', (e) => {
   e.target.value = '';
   if (!f) return;
   if (!String(f.type).startsWith('image/')) { toast('Zgjidh një foto.'); return; }
-  compressImage(f).then((dataUrl) => {
+  compressImage(f).then(async (dataUrl) => {
     if (!dataUrl) { toast('Foto s\'u përpunua.'); return; }
     if (!state.wsOk || !state.activeChat) { toast('S\'ka lidhje me serverin.'); return; }
     const clientId = 'c' + Date.now() + Math.random().toString(36).slice(2, 7);
@@ -615,7 +751,9 @@ on($('#photo-input'), 'change', (e) => {
     renderChat();
     state.last.set(state.activeChat, { text: '📷 Foto', ts: optimistic.ts, from: state.me.id });
     renderList();
-    state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, text: '', img: dataUrl, clientId }));
+    const encP = await E2EE.seal(state.activeChat, { t: '', i: dataUrl });
+    if (encP) state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, enc: encP, clientId }));
+    else state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, text: '', img: dataUrl, clientId }));
   });
 });
 function compressImage(file) {
@@ -641,6 +779,59 @@ function compressImage(file) {
     } catch (e) { resolve(null); }
   });
 }
+
+/* ================== MESAZHET ZANORE ================== */
+let rec = null, recOK = false, recStart = 0, recTimer = null;
+on($('#btn-mic'), 'click', () => {
+  if (rec) return;
+  if (!state.wsOk || !state.activeChat) { toast('S' + String.fromCharCode(39) + 'ka lidhje.'); return; }
+  navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+    try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); }
+    catch (e) { rec = new MediaRecorder(stream); }
+    const chunks = [];
+    recOK = true;
+    recStart = Date.now();
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      const dur = Math.round((Date.now() - recStart) / 1000);
+      const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+      const ok = recOK;
+      rec = null;
+      clearInterval(recTimer);
+      $('#rec-bar').classList.add('hidden');
+      $('.composer').style.display = '';
+      if (!ok || dur < 1 || blob.size < 800) return;
+      const fr = new FileReader();
+      fr.onload = async () => {
+        const dataUrl = fr.result;
+        const clientId = 'c' + Date.now() + Math.random().toString(36).slice(2, 7);
+        ensureMsgs(state.activeChat).push({ clientId, id: null, from: state.me.id, to: state.activeChat, text: '', voc: dataUrl, dur, ts: Date.now() });
+        renderChat();
+        state.last.set(state.activeChat, { text: '🎤 Zanore', ts: Date.now(), from: state.me.id });
+        renderList();
+        const enc = await E2EE.seal(state.activeChat, { t: '', v: dataUrl, d: dur });
+        if (enc) state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, enc, clientId }));
+        else state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, text: '', voc: dataUrl, clientId }));
+      };
+      fr.readAsDataURL(blob);
+    };
+    rec.start();
+    $('#rec-bar').classList.remove('hidden');
+    $('.composer').style.display = 'none';
+    const t0 = Date.now();
+    const upd = () => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      $('#rec-time').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+      if (s >= 120 && rec && rec.state === 'recording') { recOK = true; rec.stop(); } // maksimumi 2 min
+    };
+    upd();
+    recTimer = setInterval(upd, 500);
+  }).catch(() => toast('Mikrofoni nuk u lejua.'));
+});
+on($('#btn-rec-cancel'), 'click', () => { recOK = false; if (rec) rec.stop(); });
+on($('#btn-rec-send'), 'click', () => { recOK = true; if (rec) rec.stop(); });
 
 /* ================== THIRRJET (WebRTC) ================== */
 function callBtnBusy() { return !!(state.call || state.pendingOffer); }
@@ -774,6 +965,11 @@ function onCallOffer(m) {
     if (state.wsOk) state.ws.send(JSON.stringify({ type: 'call-busy', to: m.from, callId: m.callId }));
     return;
   }
+  if (state.autoDecline) {
+    state.autoDecline = false;
+    if (state.wsOk) state.ws.send(JSON.stringify({ type: 'call-decline', to: m.from, callId: m.callId }));
+    return;
+  }
   const u = state.users.get(m.from);
   m.media = m.media === 'audio' ? 'audio' : 'video';
   state.pendingOffer = m;
@@ -785,8 +981,13 @@ function onCallOffer(m) {
   av.style.background = u ? u.color : '#999';
   $('#modal-incoming').classList.remove('hidden');
   startRing();
+  if (state.autoAccept) {
+    state.autoAccept = false;
+    setTimeout(doAccept, 800); // nje prekje = thirrja lidhet vete
+  }
 }
-on($('#btn-accept'), 'click', async () => {
+on($('#btn-accept'), 'click', doAccept);
+async function doAccept() {
   unlockVideo();
   const m = state.pendingOffer;
   if (!m) return;
@@ -816,7 +1017,7 @@ on($('#btn-accept'), 'click', async () => {
     cleanupCall();
     hideIncoming();
   }
-});
+}
 on($('#btn-decline'), 'click', () => {
   const m = state.pendingOffer;
   stopRing();
@@ -991,6 +1192,12 @@ on($('#set-sound'), 'change', (e) => {
   storage.set('fc-settings', JSON.stringify(settings));
 });
 $('#set-sound').checked = settings.sound;
+if (storage.get('fc-dark') === '1') document.body.classList.add('dark');
+$('#set-dark').checked = storage.get('fc-dark') === '1';
+on($('#set-dark'), 'change', (e) => {
+  document.body.classList.toggle('dark', e.target.checked);
+  storage.set('fc-dark', e.target.checked ? '1' : '0');
+});
 
 on($('#set-code'), 'click', async () => {
   const code = $('#set-code').textContent;
@@ -1059,6 +1266,31 @@ window.addEventListener('resize', () => {
 });
 
 /* ================== NISJA ================== */
+try {
+  const qp = new URLSearchParams(location.search);
+  if (qp.get('call') === 'accept') state.autoAccept = true;
+  if (qp.get('call') === 'decline') state.autoDecline = true;
+  if (qp.has('call')) history.replaceState({}, '', location.pathname);
+} catch (e) {}
+try {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (ev) => {
+      const d = ev && ev.data;
+      if (!d || d.cmd !== 'call-action') return;
+      if (d.action === 'accept') state.autoAccept = true;
+      if (d.action === 'decline') {
+        state.autoDecline = true;
+        if (state.pendingOffer) {
+          const m0 = state.pendingOffer;
+          state.pendingOffer = null;
+          stopRing();
+          hideIncoming();
+          if (state.wsOk) state.ws.send(JSON.stringify({ type: 'call-decline', to: m0.from, callId: m0.callId }));
+        }
+      }
+    });
+  }
+} catch (e) {}
 if (state.token) {
   enterApp();
 } else {

@@ -112,12 +112,24 @@
           <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM9 3 7.17 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.17L15 3H9zm3 4.2a4.8 4.8 0 1 1 0 9.6 4.8 4.8 0 0 1 0-9.6z"/></svg>
         </button>
         <input id="photo-input" type="file" accept="image/*" hidden>
+        <button id="btn-mic" class="icon-btn photo" type="button" aria-label="Mesazh zanor" title="Mesazh zanor">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v7a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 12h-2z"/></svg>
+        </button>
         <button id="btn-emoji" class="icon-btn" type="button" aria-label="Emojis">😊</button>
         <input id="input" type="text" placeholder="Shkruaj një mesazh…" maxlength="4000" autocomplete="off">
         <button id="btn-send" class="send-btn" type="button" aria-label="Dërgo">
           <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
       </footer>
+      <div id="rec-bar" class="rec-bar hidden">
+        <span class="rec-dot"></span>
+        <span id="rec-time" class="rec-time">0:00</span>
+        <span class="rec-hint">po incizon…</span>
+        <button id="btn-rec-cancel" class="icon-btn" aria-label="Anulo">✕</button>
+        <button id="btn-rec-send" class="send-btn" aria-label="Dërgo">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </div>
     </section>
 
     <!-- ================= MBIVENDOSJA E THIRRJES ================= -->
@@ -177,6 +189,10 @@
           <span id="notif-status" class="muted small"></span>
         </div>
         <div class="settings-block">
+          <div class="settings-label">Pamja</div>
+          <label class="switch"><input type="checkbox" id="set-dark"><span></span>Dark mode 🌙</label>
+        </div>
+        <div class="settings-block">
           <div class="settings-label">Tingujt</div>
           <label class="switch"><input type="checkbox" id="set-sound" checked><span></span>Tingull për mesazhe & thirrje</label>
         </div>
@@ -199,7 +215,7 @@
           <button id="btn-logout" class="btn btn-danger">Dil</button>
           <button id="btn-close-settings" class="btn btn-primary">Mbyll</button>
         </div>
-        <p class="muted small" style="text-align:center;margin-top:12px;">Familja Chat · v1.20</p>
+        <p class="muted small" style="text-align:center;margin-top:12px;">Familja Chat · v2.0</p>
       </div>
     </div>
 

@@ -17,7 +17,7 @@ const { WSConn, acceptKey } = require('./ws-lib');
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = __dirname;
-const STATIC_OK = new Set(['index.html','app.js','styles.css','sw.js','manifest.webmanifest','icon-192.png','icon-512.png']);
+const STATIC_OK = new Set(['index.html','app.js','styles.css','sw.js','manifest.webmanifest','icon-192.png','icon-512.png','ring.wav']);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
@@ -149,7 +149,7 @@ function findUserByName(name) {
   return db.users.find(u => u.nameLower === n) || null;
 }
 function publicUser(u, online) {
-  return { id: u.id, name: u.name, color: u.color, isAdmin: !!u.isAdmin, lastSeen: u.lastSeen || 0, online: !!online };
+  return { id: u.id, name: u.name, color: u.color, isAdmin: !!u.isAdmin, lastSeen: u.lastSeen || 0, online: !!online, pubKey: u.pubKey || null };
 }
 function newInviteCode() {
   let s = '';
@@ -453,6 +453,15 @@ server.on('upgrade', (req, socket) => {
     const me = conn.user;
 
     switch (m.type) {
+      case 'pubkey': {
+        const key = typeof m.key === 'string' ? m.key.slice(0, 400) : null;
+        if (key && conn.user.pubKey !== key) {
+          conn.user.pubKey = key;
+          markDirty();
+          broadcast({ type: 'presence', users: presenceSnapshot() });
+        }
+        return;
+      }
       case 'ping':
         reply({ type: 'pong', t: m.t });
         return;
@@ -475,9 +484,13 @@ server.on('upgrade', (req, socket) => {
         const peer = findUser(m.to);
         const body = String(m.text || '').trim().slice(0, MAX_MESSAGE_LEN);
         const img = (typeof m.img === 'string' && m.img.startsWith('data:image/') && m.img.length < 500000) ? m.img : null;
-        if (!peer || peer.id === me.id || (!body && !img)) return;
+        const enc = (typeof m.enc === 'string' && m.enc.length > 20 && m.enc.length < 700000) ? m.enc : null;
+        const voc = (typeof m.voc === 'string' && m.voc.startsWith('data:audio/') && m.voc.length < 700000) ? m.voc : null;
+        if (!peer || peer.id === me.id || (!body && !img && !enc && !voc)) return;
         const msg = { id: uid(), from: me.id, to: peer.id, text: body, ts: Date.now() };
         if (img) msg.img = img;
+        if (enc) msg.enc = enc;
+        if (voc) msg.voc = voc;
         db.messages.push(msg);
         if (db.messages.length > MAX_MESSAGES) db.messages.splice(0, db.messages.length - MAX_MESSAGES);
         markDirty();
@@ -492,7 +505,12 @@ server.on('upgrade', (req, socket) => {
         if (delivered) sendTo(me.id, { type: 'msg-status', peer: peer.id, status: 'delivered', ids: [msg.id] });
         if (!delivered || !isResponsive(peer.id)) {
           const unreadNow = (unreadFor(peer.id)[me.id] || 0) + 1;
-          pushNotify(peer.id, me.name, img ? '📷 Foto' : (body.length > 80 ? body.slice(0, 77) + '…' : body), 'chat-' + me.id, 'normal', unreadNow);
+          let pbody;
+          if (enc) pbody = '💬 Mesazh i fshehtë';
+          else if (voc) pbody = '🎤 Mesazh zanor';
+          else if (img) pbody = '📷 Foto';
+          else pbody = body.length > 80 ? body.slice(0, 77) + '…' : body;
+          pushNotify(peer.id, me.name, pbody, 'chat-' + me.id, 'normal', unreadNow);
         }
         return;
       }
@@ -514,6 +532,17 @@ server.on('upgrade', (req, socket) => {
         return;
       }
 
+      case 'msg-delete': {
+        const t = db.messages.find(x => x.id === m.id);
+        if (!t || t.from !== me.id || t.deleted) return;
+        t.deleted = true;
+        delete t.text; delete t.img; delete t.enc; delete t.voc;
+        markDirty();
+        const own = online.get(me.id);
+        if (own) for (const c of own) c.sendObj({ type: 'msg-deleted', id: t.id });
+        sendTo(t.to, { type: 'msg-deleted', id: t.id, from: me.id });
+        return;
+      }
       case 'remove-member': {
         if (!conn.user.isAdmin) { reply({ type: 'error', msg: 'Vetëm administratori fshin anëtarë.' }); return; }
         const target = findUser(m.userId);

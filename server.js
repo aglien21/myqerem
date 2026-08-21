@@ -149,7 +149,7 @@ function findUserByName(name) {
   return db.users.find(u => u.nameLower === n) || null;
 }
 function publicUser(u, online) {
-  return { id: u.id, name: u.name, color: u.color, isAdmin: !!u.isAdmin, lastSeen: u.lastSeen || 0, online: !!online, pubKey: u.pubKey || null };
+  return { id: u.id, name: u.name, color: u.color, isAdmin: !!u.isAdmin, lastSeen: u.lastSeen || 0, online: !!online, pubKey: u.pubKey || null, avVer: u.avatarVer || 0 };
 }
 function newInviteCode() {
   let s = '';
@@ -329,6 +329,16 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { token: signToken(user.id), user: publicUser(user, true), inviteCode: db.family.inviteCode });
   }
 
+  if (p.startsWith('/api/avatar/')) {
+    const id = p.slice('/api/avatar/'.length).replace(/[^A-Za-z0-9_-]/g, '');
+    const u = findUser(id);
+    if (!u || !u.avatar) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end(); }
+    const mm = /^data:(image\/[a-z+]+);base64,(.*)$/.exec(u.avatar);
+    if (!mm) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end(); }
+    const buf = Buffer.from(mm[2], 'base64');
+    res.writeHead(200, { 'Content-Type': mm[1], 'Content-Length': buf.length, 'Cache-Control': 'public, max-age=31536000, immutable' });
+    return res.end(buf);
+  }
   if (p === '/api/push-sub' && req.method === 'POST') {
     let b;
     try { b = await readBody(req); } catch (e) { return json(res, 400, { error: 'Kërkesë e pavlefshme' }); }
@@ -453,6 +463,20 @@ server.on('upgrade', (req, socket) => {
     const me = conn.user;
 
     switch (m.type) {
+      case 'avatar': {
+        if (m.img === null) {
+          conn.user.avatar = null;
+          conn.user.avatarVer = (conn.user.avatarVer || 0) + 1;
+          markDirty();
+          broadcast({ type: 'presence', users: presenceSnapshot() });
+        } else if (typeof m.img === 'string' && m.img.startsWith('data:image/') && m.img.length < 120000) {
+          conn.user.avatar = m.img;
+          conn.user.avatarVer = (conn.user.avatarVer || 0) + 1;
+          markDirty();
+          broadcast({ type: 'presence', users: presenceSnapshot() });
+        }
+        return;
+      }
       case 'pubkey': {
         const key = typeof m.key === 'string' ? m.key.slice(0, 400) : null;
         if (key && conn.user.pubKey !== key) {

@@ -2,7 +2,7 @@
 <html lang="sq">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content">
   <title>Familja Chat</title>
   <meta name="description" content="Biseda dhe telefonata video, vetëm për familjen tënde.">
   <meta name="theme-color" content="#075E54">
@@ -183,6 +183,15 @@
           <span class="chip" id="set-code" title="Kopjo">…</span>
         </div>
         <div class="settings-block">
+          <div class="settings-label">Foto e profilit</div>
+          <p class="muted small">Zgjidh një foto — shfaqet të gjithëve (lista, bisedat, thirrjet).</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="btn-avatar" class="btn btn-secondary">Zgjidh foton</button>
+            <button id="btn-avatar-del" class="btn btn-secondary">Hiqe</button>
+          </div>
+          <input id="avatar-input" type="file" accept="image/*" hidden>
+        </div>
+        <div class="settings-block">
           <div class="settings-label">Njoftimet</div>
           <p class="muted small">Aktivizoi që të të vijnë njoftime kur je jashtë aplikacionit.</p>
           <button id="btn-notif" class="btn btn-secondary">Aktivizo njoftimet</button>
@@ -215,7 +224,7 @@
           <button id="btn-logout" class="btn btn-danger">Dil</button>
           <button id="btn-close-settings" class="btn btn-primary">Mbyll</button>
         </div>
-        <p class="muted small" style="text-align:center;margin-top:12px;">Familja Chat · v2.0</p>
+        <p class="muted small" style="text-align:center;margin-top:12px;">Familja Chat · v2.1</p>
       </div>
     </div>
 

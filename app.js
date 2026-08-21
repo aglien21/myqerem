@@ -505,6 +505,20 @@ function handleWs(m) {
   }
 }
 
+/* avatar: foto ose shkronja */
+function fillAvatar(avEl, user) {
+  avEl.textContent = '';
+  avEl.style.background = (user && user.color) ? user.color : '#999';
+  if (user && user.avVer) {
+    const im = el('img');
+    im.src = '/api/avatar/' + user.id + '?v=' + user.avVer;
+    im.alt = (user.name || '?').charAt(0).toUpperCase();
+    avEl.appendChild(im);
+  } else {
+    avEl.textContent = (user && user.name ? user.name : '?').charAt(0).toUpperCase();
+  }
+}
+
 /* ================== LISTA ================== */
 function ensureMsgs(peer) {
   if (!state.msgs.has(peer)) state.msgs.set(peer, []);
@@ -513,8 +527,7 @@ function ensureMsgs(peer) {
 function renderMe() {
   if (!state.me) return;
   const a = $('#me-avatar');
-  a.textContent = state.me.name.charAt(0).toUpperCase();
-  a.style.background = state.me.color;
+  fillAvatar(a, state.me);
   $('#me-name').textContent = state.me.name;
   $('#set-name').textContent = state.me.name;
   if (state.inviteCode) $('#set-code').textContent = state.inviteCode;
@@ -542,8 +555,8 @@ function renderList() {
   });
   for (const u of users) {
     const li = el('li');
-    const av = el('div', 'avatar', u.name.charAt(0).toUpperCase());
-    av.style.background = u.color;
+    const av = el('div', 'avatar');
+    fillAvatar(av, u);
     av.appendChild(el('span', 'dot' + (u.online ? ' on' : '')));
     const main = el('div', 'member-main');
     main.appendChild(el('div', 'member-name', u.name));
@@ -572,8 +585,7 @@ function openChat(peerId) {
   $('#screen-list').classList.toggle('hidden', window.innerWidth < 900);
   $('#peer-name').textContent = u.name;
   const av = $('#peer-avatar');
-  av.textContent = u.name.charAt(0).toUpperCase();
-  av.style.background = u.color;
+  fillAvatar(av, u);
   updatePeerHeader();
   renderChat();
   // historia lokale (në telefon) bashkohet me atë të serverit
@@ -582,7 +594,9 @@ function openChat(peerId) {
   });
   if (state.wsOk) state.ws.send(JSON.stringify({ type: 'history', peer: peerId }));
   markRead(peerId);
-  $('#input').focus({ preventScroll: true });
+  const inp = $('#input');
+  inp.focus();
+  setTimeout(() => { try { inp.scrollIntoView({ block: 'nearest' }); } catch (e) {} }, 300);
 }
 function updatePeerHeader() {
   const u = state.users.get(state.activeChat);
@@ -756,14 +770,14 @@ on($('#photo-input'), 'change', (e) => {
     else state.ws.send(JSON.stringify({ type: 'msg', to: state.activeChat, text: '', img: dataUrl, clientId }));
   });
 });
-function compressImage(file) {
+function compressImage(file, maxDim) {
   return new Promise((resolve) => {
     try {
       const img = new Image();
       const url = URL.createObjectURL(file);
       img.onload = () => {
         URL.revokeObjectURL(url);
-        const MAX = 1280;
+        const MAX = maxDim || 1280;
         let w = img.naturalWidth || MAX, h = img.naturalHeight || MAX;
         if (w > MAX || h > MAX) {
           const k = Math.min(MAX / w, MAX / h);
@@ -977,8 +991,7 @@ function onCallOffer(m) {
   $('#incoming-name').textContent = m.media === 'audio' ? 'Thirrje zanore' : 'Thirrje video';
   $('#incoming-sub').textContent = u ? u.name : 'Anonim';
   const av = $('#incoming-avatar');
-  av.textContent = u ? u.name.charAt(0).toUpperCase() : '?';
-  av.style.background = u ? u.color : '#999';
+  fillAvatar(av, u || { name: '?' });
   $('#modal-incoming').classList.remove('hidden');
   startRing();
   if (state.autoAccept) {
@@ -1071,8 +1084,7 @@ function showCallOverlay(status, localStream, media) {
   if (audio && state.call) {
     const u = state.users.get(state.call.peerId);
     const av = $('#audio-avatar');
-    av.textContent = u ? u.name.charAt(0).toUpperCase() : '?';
-    av.style.background = u ? u.color : '#999';
+    fillAvatar(av, u || { name: '?' });
     $('#audio-name').textContent = u ? u.name : '…';
   }
   updateCallButtons();
@@ -1227,6 +1239,22 @@ async function enableNotifications() {
     $('#notif-status').textContent += ' (Push s\'u aktivizua në këtë mjedis.)';
   }
 }
+on($('#btn-avatar'), 'click', () => $('#avatar-input').click());
+on($('#avatar-input'), 'change', (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (!String(f.type).startsWith('image/')) { toast('Zgjidh një foto.'); return; }
+  compressImage(f, 320).then((dataUrl) => {
+    if (!dataUrl) { toast('Foto nuk u përpunua.'); return; }
+    if (!state.wsOk) { toast('S ka lidhje me serverin.'); return; }
+    state.ws.send(JSON.stringify({ type: 'avatar', img: dataUrl }));
+    toast('Foto u vendos ✓');
+  });
+});
+on($('#btn-avatar-del'), 'click', () => {
+  if (state.wsOk) { state.ws.send(JSON.stringify({ type: 'avatar', img: null })); toast('Foto u hoq.'); }
+});
 on($('#btn-notif'), 'click', enableNotifications);
 on($('#btn-diag'), 'click', async () => {
   const txt = diag.length ? diag.join('\n') : '( ende pa thirrje te regjistruara )';
@@ -1264,6 +1292,28 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('resize', () => {
   if (window.innerWidth >= 900) $('#screen-list').classList.remove('hidden');
 });
+
+/* TASTJERA: përshtate aplikacionin me hapësirën mbi tastjerë (iOS/Android)
+   — pa këtë, fusha e shkrimit mbetet e fshehur PAS tastjeres herën e parë */
+(function keyboardFit() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const app = document.getElementById('app');
+  const fit = () => {
+    const kb = window.innerHeight - vv.height;
+    if (kb > 80) {
+      app.style.height = vv.height + 'px';
+      app.style.top = vv.offsetTop + 'px';
+      app.style.bottom = 'auto';
+    } else {
+      app.style.height = '';
+      app.style.top = '';
+      app.style.bottom = '';
+    }
+  };
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+})();
 
 /* ================== NISJA ================== */
 try {

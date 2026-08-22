@@ -333,6 +333,19 @@ function enterApp() {
   loadConfig().then(healSubscription);
   registerSW();
 }
+/* aplikacioni NATIV (Android): i jep serverit token-in e Firebase (zile e vertete) */
+async function registerNativeToken() {
+  try {
+    if (!window.FamiljaNative || !state.token) return;
+    const f = window.FamiljaNative.fcmToken();
+    if (!f) return;
+    await fetch('/api/device-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: state.token, fcm: f })
+    });
+  } catch (e) {}
+}
 /* rivendos abonimin push nëse ka humbur (p.sh. pas një rinisjeje të serverit) */
 async function healSubscription() {
   try {
@@ -419,6 +432,7 @@ function handleWs(m) {
       updateConnStatus();
       renderMe();
       renderList();
+      registerNativeToken();
       // mbushi bisedat me mesazhet që mund të humbën gjatë kohës offline
       if (state.wsOk && state.ws) {
         const peers = new Set([...state.unread.keys()]);

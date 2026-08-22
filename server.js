@@ -36,7 +36,8 @@ let db = {
   family: { name: 'Familja Jonë', inviteCode: null, adminId: null },
   users: [],
   messages: [],
-  subs: []
+  subs: [],
+  fcmTokens: []
 };
 
 let pgPool = null;
@@ -177,7 +178,70 @@ try {
   console.log('[push] Moduli "web-push" nuk është instaluar -> njoftimet push janë të ç\'aktivizuara (chat & thirrje punojnë normalisht).');
 }
 
+let fcmSa = null, fcmTokenCache = null;
+function fcmSaInit() {
+  if (fcmSa !== null) return !!fcmSa;
+  const raw = process.env.FCM_SA;
+  if (!raw) { fcmSa = null; return false; }
+  try { fcmSa = JSON.parse(raw); return true; } catch (e) { fcmSa = null; return false; }
+}
+async function fcmAccessToken() {
+  if (!fcmSaInit() || !fcmSa) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (fcmTokenCache && fcmTokenCache.exp > now + 60) return fcmTokenCache.tok;
+  const sa = fcmSa;
+  const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const header = b64u({ alg: 'RS256', typ: 'JWT' });
+  const claims = b64u({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: sa.token_uri, iat: now, exp: now + 3600 });
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(header + '.' + claims);
+  const sig = signer.sign(sa.private_key, 'base64url');
+  const r = await fetch(sa.token_uri, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=' + encodeURIComponent(header + '.' + claims + '.' + sig)
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!j.access_token) { console.error('[fcm] tokeni deshtoi:', JSON.stringify(j).slice(0, 200)); return null; }
+  fcmTokenCache = { tok: j.access_token, exp: now + 3500 };
+  return j.access_token;
+}
+async function sendFcm(token, data) {
+  try {
+    const tok = await fcmAccessToken();
+    if (!tok || !fcmSa) return false;
+    const url = 'https://fcm.googleapis.com/v1/projects/' + fcmSa.project_id + '/messages:send';
+    const clean = {};
+    for (const k of Object.keys(data)) clean[k] = String(data[k]);
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: { token, data: clean, android: { priority: 'HIGH' } } })
+    });
+    if (!r.ok) {
+      const t = await r.text().catch(() => '');
+      if (t.indexOf('UNREGISTERED') !== -1 || t.indexOf('Invalid registration') !== -1) {
+        db.fcmTokens = db.fcmTokens.filter(x => x.fcm !== token);
+        markDirty();
+      }
+      console.error('[fcm] dërgimi:', r.status, t.slice(0, 150));
+      return false;
+    }
+    return true;
+  } catch (e) { return false; }
+}
+
 function pushNotify(userId, title, body, tag, urgency, badge) {
+  const isCall = !!tag && tag.indexOf('call-') === 0;
+  if (fcmSaInit()) {
+    const list = db.fcmTokens.filter(x => x.userId === userId);
+    let sent = false;
+    for (const x of list) {
+      sendFcm(x.fcm, { type: isCall ? 'call' : 'msg', title, body, tag: tag || '' });
+      sent = true;
+    }
+    if (sent) return; // pajisja native mori gjithçka (zile e vërtetë) — s'duhet web-push dublime
+  }
   if (!pushReady) return;
   const subs = db.subs.filter(s => s.userId === userId);
   for (const s of subs) {
@@ -338,6 +402,19 @@ const server = http.createServer(async (req, res) => {
     const buf = Buffer.from(mm[2], 'base64');
     res.writeHead(200, { 'Content-Type': mm[1], 'Content-Length': buf.length, 'Cache-Control': 'public, max-age=31536000, immutable' });
     return res.end(buf);
+  }
+  if (p === '/api/device-token' && req.method === 'POST') {
+    let b;
+    try { b = await readBody(req); } catch (e) { return json(res, 400, { error: 'Kerkese e pavlefshme' }); }
+    const userId = verifyToken(b.token);
+    if (!userId) return json(res, 401, { error: 'I paautorizuar' });
+    if (typeof b.fcm !== 'string' || b.fcm.length < 20 || b.fcm.length > 4096) return json(res, 400, { error: 'Token i pavlefshem' });
+    if (!Array.isArray(db.fcmTokens)) db.fcmTokens = [];
+    db.fcmTokens = db.fcmTokens.filter(x => x.fcm !== b.fcm);
+    db.fcmTokens.push({ userId, fcm: b.fcm });
+    if (db.fcmTokens.length > 200) db.fcmTokens.splice(0, db.fcmTokens.length - 200);
+    markDirty();
+    return json(res, 200, { ok: true });
   }
   if (p === '/api/push-sub' && req.method === 'POST') {
     let b;
